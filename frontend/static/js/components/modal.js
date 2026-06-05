@@ -1,6 +1,7 @@
 import { api, safe } from '../api.js';
 import { renderChart } from './chart.js';
 import { renderSignals } from './signals.js';
+import { renderTopBottomSignals } from './topBottomSignals.js';
 import { renderExpirationSelect, renderOptionChain } from './optionChain.js';
 import { renderAlertAnalysisButton } from './aiAnalysis.js';
 
@@ -25,6 +26,7 @@ export function openModal(ticker) {
           </div>
           <div id="modal-signals"><div class="rounded-[2rem] p-8 min-h-[320px] bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] flex items-center justify-center"><div class="w-6 h-6 border-2 border-white/60 border-t-transparent rounded-full animate-spin"></div></div></div>
         </section>
+        <section id="top-bottom-signals"><div class="h-80 rounded-3xl skeleton"></div></section>
         <section class="space-y-4"><div class="flex items-center justify-between gap-4 flex-wrap"><h3 class="font-headline font-extrabold text-xl">期权链</h3><div id="expiration-wrap"><div class="h-10 w-40 skeleton"></div></div></div><div id="option-chain"><div class="h-56 rounded-3xl skeleton"></div></div></section>
         <section id="modal-stats" class="space-y-6"><div class="grid grid-cols-2 md:grid-cols-4 gap-4">${Array.from({length:4}).map(()=>'<div class="h-24 rounded-3xl skeleton"></div>').join('')}</div></section>
       </div>
@@ -68,6 +70,7 @@ async function mountModal(ticker) {
   safe(api.stock(ticker)).then(d => { if (!d.__error) renderHeaderAndStats(d); });
   loadChart(ticker, currentRange);
   safe(api.signals(ticker)).then(d => { document.getElementById('modal-signals').innerHTML = renderSignals(d); });
+  safe(api.topBottomSignals(ticker)).then(d => { const el = document.getElementById('top-bottom-signals'); if (el) renderTopBottomSignals(el, ticker, d); });
   loadOptions(ticker);
 }
 
