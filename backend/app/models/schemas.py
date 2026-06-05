@@ -41,6 +41,7 @@ class BarsResponse(BaseModel):
 
 
 class ExpirationsResponse(BaseModel):
+    ticker: Optional[str] = None
     expirations: List[str]
 
 

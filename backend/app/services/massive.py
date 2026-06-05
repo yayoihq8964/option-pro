@@ -138,6 +138,7 @@ class MassiveClient:
         expiration_date: str | None = None,
         limit: int = 250,
         extra_params: dict[str, Any] | None = None,
+        max_pages: int = 5,
     ) -> dict[str, Any]:
         params = {
             "underlying_ticker": ticker.upper(),
@@ -147,7 +148,7 @@ class MassiveClient:
         }
         if extra_params:
             params.update(extra_params)
-        return await self._paginated("/v3/reference/options/contracts", params, max_pages=5)
+        return await self._paginated("/v3/reference/options/contracts", params, max_pages=max_pages)
 
     async def aggs(self, ticker: str, multiplier: int, timespan: str, from_: str, to: str, limit: int = 5000) -> dict[str, Any]:
         return await self._request(

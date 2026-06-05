@@ -57,10 +57,10 @@ async def expirations(ticker: str):
     data = await cache.get_or_set(
         key,
         300,
-        lambda: client.option_contracts(symbol, limit=250, extra_params={"expiration_date.gte": date.today().isoformat()}),
+        lambda: client.option_contracts(symbol, limit=250, extra_params={"expiration_date.gte": date.today().isoformat()}, max_pages=1),
     )
     exps = sorted({item.get("expiration_date") for item in data.get("results", []) if item.get("expiration_date")})
-    return ExpirationsResponse(expirations=exps)
+    return ExpirationsResponse(ticker=symbol, expirations=exps)
 
 
 @router.get("/{ticker}/chain", response_model=OptionChainResponse)
@@ -70,7 +70,7 @@ async def option_chain(ticker: str, expiration: str = Query(..., pattern=r"^\d{4
     data = await cache.get_or_set(
         f"contracts:{symbol}:{expiration}",
         300,
-        lambda: client.option_contracts(symbol, expiration_date=expiration, limit=250),
+        lambda: client.option_contracts(symbol, expiration_date=expiration, limit=250, max_pages=1),
     )
     prev_data = await cache.get_or_set(f"aggs_prev:{symbol}", 60, lambda: client.aggs_prev(symbol))
     prev = (prev_data.get("results") or [{}])[0]

@@ -1,7 +1,15 @@
-const json = async (url) => {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`${r.status} ${url}`);
-  return r.json();
+const json = async (url, timeout = 30000) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const r = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    if (!r.ok) throw new Error(`${r.status} ${url}`);
+    return r.json();
+  } catch (e) {
+    clearTimeout(id);
+    throw e;
+  }
 };
 export const api = {
   searchStocks: (q) => json(`/api/stocks/search?q=${encodeURIComponent(q)}`),
