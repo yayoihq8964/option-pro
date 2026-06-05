@@ -351,13 +351,12 @@ async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|1h|5d|
     def _work():
         # Config per timeframe: (period, interval, include_prepost)
         config = {
-            "1d":  ("2d",  "5m",  True),   # 2 days of 5-min with pre/post
-            "1h":  ("10d", "1h",  True),    # 10 days of hourly with pre/post
-            "5d":  ("10d", "30m", False),   # 10 days of 30-min, regular hours only
-            "1m":  ("3mo", "1d",  False),
-            "3m":  ("6mo", "1d",  False),
-            "1y":  ("1y",  "1d",  False),
-            "all": ("5y",  "1wk", False),
+            "1h":  ("5d",  "1h",  True),    # 5 days hourly
+            "1d":  ("2d",  "5m",  True),    # 2 days 5-min
+            "5d":  ("5d",  "15m", False),   # 5 days 15-min
+            "1m":  ("1mo", "1d",  False),   # 1 month daily
+            "1y":  ("6mo", "1d",  False),   # 6 months daily
+            "all": ("2y",  "1wk", False),   # 2 years weekly
         }
         period, interval, prepost = config.get(range, ("3mo", "1d", False))
 
