@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import date
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query
 
-from app.models.schemas import ExpirationsResponse, OptionChainResponse, OptionLeg, UnusualActivity
+from app.models.schemas import ExpirationsResponse, OptionChainResponse, OptionLeg, UnusualActivityLimitedResponse
 from app.services.cache import cache
 from app.services.massive import MassiveClient
 
@@ -14,13 +13,13 @@ router = APIRouter(prefix="/api/options", tags=["options"])
 POPULAR_TICKERS = ["NVDA", "AAPL", "TSLA", "AMD", "MSFT", "AMZN", "META", "GOOGL", "SPY", "QQQ"]
 
 
-def parse_option(item: dict[str, Any]) -> OptionLeg:
-    details = item.get("details") or {}
+def parse_option(item: dict[str, Any], underlying_price: float | None = None) -> OptionLeg:
+    details = item.get("details") or item
     quote = item.get("last_quote") or {}
     trade = item.get("last_trade") or {}
     greeks = item.get("greeks") or {}
     day = item.get("day") or {}
-    underlying_price = (item.get("underlying_asset") or {}).get("price")
+    underlying_price = underlying_price if underlying_price is not None else (item.get("underlying_asset") or {}).get("price")
     strike = float(details.get("strike_price") or 0)
     typ = details.get("contract_type") or "call"
     itm = None
@@ -55,7 +54,11 @@ async def expirations(ticker: str):
     symbol = ticker.upper()
     client = MassiveClient()
     key = f"expirations:{symbol}"
-    data = await cache.get_or_set(key, 300, lambda: client.option_contracts(symbol, expiration_gte=date.today().isoformat()))
+    data = await cache.get_or_set(
+        key,
+        300,
+        lambda: client.option_contracts(symbol, limit=250, extra_params={"expiration_date.gte": date.today().isoformat()}),
+    )
     exps = sorted({item.get("expiration_date") for item in data.get("results", []) if item.get("expiration_date")})
     return ExpirationsResponse(expirations=exps)
 
@@ -64,64 +67,40 @@ async def expirations(ticker: str):
 async def option_chain(ticker: str, expiration: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
     symbol = ticker.upper()
     client = MassiveClient()
-    data = await cache.get_or_set(f"chain:{symbol}:{expiration}", 120, lambda: client.option_chain(symbol, expiration))
-    legs = [parse_option(item) for item in data.get("results", [])]
+    data = await cache.get_or_set(
+        f"contracts:{symbol}:{expiration}",
+        300,
+        lambda: client.option_contracts(symbol, expiration_date=expiration, limit=250),
+    )
+    prev_data = await cache.get_or_set(f"aggs_prev:{symbol}", 60, lambda: client.aggs_prev(symbol))
+    prev = (prev_data.get("results") or [{}])[0]
+    underlying_price = prev.get("c")
+
+    legs = [parse_option(item, underlying_price=underlying_price) for item in data.get("results", [])]
     calls = sorted([l for l in legs if l.type == "call"], key=lambda l: l.strike)
     puts = sorted([l for l in legs if l.type == "put"], key=lambda l: l.strike)
-    underlying_price = None
-    for item in data.get("results", []):
-        underlying_price = (item.get("underlying_asset") or {}).get("price")
-        if underlying_price is not None:
-            break
     strikes = sorted({l.strike for l in legs})
     grouped: dict[str, dict[str, OptionLeg | None]] = {str(s): {"call": None, "put": None} for s in strikes}
     for leg in legs:
         grouped[str(leg.strike)][leg.type] = leg
-    return OptionChainResponse(calls=calls, puts=puts, underlying_price=underlying_price, strikes=strikes, grouped_by_strike=grouped)
+    return OptionChainResponse(
+        calls=calls,
+        puts=puts,
+        underlying_price=underlying_price,
+        strikes=strikes,
+        grouped_by_strike=grouped,
+        data_limited=True,
+        upgrade_message="Live options quotes, IV, Greeks, volume, and open interest require the Options Starter plan. Upgrade at massive.com/pricing",
+    )
 
 
-@router.get("/unusual", response_model=list[UnusualActivity])
+@router.get("/unusual", response_model=UnusualActivityLimitedResponse)
 async def unusual_activity(
     type: Literal["all", "call", "put"] = "all",
     min_vol_oi: float = Query(1.0, ge=0),
 ):
-    client = MassiveClient()
-
-    async def scan(symbol: str) -> list[UnusualActivity]:
-        try:
-            data = await cache.get_or_set(f"unusual_chain:{symbol}", 120, lambda: client.option_chain(symbol, limit=250))
-        except Exception:
-            return []
-        out: list[UnusualActivity] = []
-        for item in data.get("results", []):
-            leg = parse_option(item)
-            if type != "all" and leg.type != type:
-                continue
-            vol = leg.volume or 0
-            oi = leg.open_interest or 0
-            if oi <= 0:
-                continue
-            ratio = vol / oi
-            if ratio < min_vol_oi:
-                continue
-            price = leg.midpoint or leg.last_price
-            premium = round(price * vol * 100, 2) if price is not None else None
-            out.append(UnusualActivity(
-                ticker=symbol,
-                contract_ticker=leg.ticker,
-                type=leg.type,
-                strike=leg.strike,
-                expiration=leg.expiration,
-                volume=vol,
-                oi=oi,
-                vol_oi=round(ratio, 4),
-                premium=premium,
-                implied_volatility=leg.implied_volatility,
-                underlying_price=(item.get("underlying_asset") or {}).get("price"),
-            ))
-        return out
-
-    chunks = await asyncio.gather(*(scan(t) for t in POPULAR_TICKERS))
-    rows = [row for chunk in chunks for row in chunk]
-    rows.sort(key=lambda r: (r.vol_oi, r.premium or 0), reverse=True)
-    return rows[:100]
+    return UnusualActivityLimitedResponse(
+        results=[],
+        data_limited=True,
+        message="Unusual activity requires Options Starter plan. Upgrade at massive.com/pricing",
+    )

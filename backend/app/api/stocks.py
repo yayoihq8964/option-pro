@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import BarsResponse, StockOverview, TickerSearchResult
 from app.services.cache import cache
@@ -54,22 +54,31 @@ async def stock_overview(ticker: str):
     symbol = ticker.upper()
     client = MassiveClient()
     details_data = await cache.get_or_set(f"ticker_details:{symbol}", 300, lambda: client.ticker_details(symbol))
-    snap_data = await cache.get_or_set(f"stock_snapshot:{symbol}", 60, lambda: client.stock_snapshot(symbol))
+    prev_data = await cache.get_or_set(f"aggs_prev:{symbol}", 60, lambda: client.aggs_prev(symbol))
     details = details_data.get("results") or {}
-    snap = _snapshot_payload(snap_data)
-    price = _last_price(snap)
-    change, change_pct, prev = _change(snap, price)
+    prev = (prev_data.get("results") or [{}])[0]
+    if not prev:
+        raise HTTPException(status_code=404, detail=f"No previous day aggregate found for {symbol}")
+
+    open_price = prev.get("o")
+    close_price = prev.get("c")
+    change = close_price - open_price if close_price is not None and open_price is not None else None
+    change_pct = (change / open_price * 100) if change is not None and open_price not in (None, 0) else None
     return StockOverview(
         ticker=symbol,
         name=details.get("name"),
-        price=price,
-        change=change,
-        change_percent=change_pct,
-        volume=(snap.get("day") or {}).get("v") or (snap.get("min") or {}).get("v"),
+        price=close_price,
+        change=round(change, 4) if change is not None else None,
+        change_percent=round(change_pct, 4) if change_pct is not None else None,
+        volume=prev.get("v"),
         market_cap=details.get("market_cap"),
-        prev_close=prev,
+        prev_close=close_price,
+        high=prev.get("h"),
+        low=prev.get("l"),
+        open=open_price,
         description=details.get("description"),
         sic_code=details.get("sic_code"),
+        sic_description=details.get("sic_description"),
     )
 
 

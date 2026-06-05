@@ -19,8 +19,12 @@ class StockOverview(BaseModel):
     volume: Optional[float] = None
     market_cap: Optional[float] = None
     prev_close: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    open: Optional[float] = None
     description: Optional[str] = None
     sic_code: Optional[str] = None
+    sic_description: Optional[str] = None
 
 
 class Bar(BaseModel):
@@ -69,6 +73,8 @@ class OptionChainResponse(BaseModel):
     underlying_price: Optional[float] = None
     strikes: List[float]
     grouped_by_strike: Dict[str, Dict[str, Optional[OptionLeg]]]
+    data_limited: bool = False
+    upgrade_message: Optional[str] = None
 
 
 class UnusualActivity(BaseModel):
@@ -103,6 +109,18 @@ class SectorIVRank(BaseModel):
 class SectorHeatmapItem(BaseModel):
     ticker: str
     iv_percentile: Optional[float] = None
+
+
+class UnusualActivityLimitedResponse(BaseModel):
+    results: List[UnusualActivity] = []
+    data_limited: bool = True
+    message: str
+
+
+class SectorIVLimitedResponse(BaseModel):
+    rankings: List[Union[SectorIVRank, SectorHeatmapItem]] = []
+    data_limited: bool = True
+    message: str
 
 
 class MarketStatus(BaseModel):
