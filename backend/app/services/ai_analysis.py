@@ -9,16 +9,20 @@ _cache: dict[str, tuple[datetime, dict]] = {}
 
 def _get_client() -> OpenAI:
     key = os.environ.get("OPENAI_API_KEY", "")
+    base = os.environ.get("OPENAI_BASE_URL", "")
     if not key:
         raise RuntimeError("OPENAI_API_KEY not set")
-    return OpenAI(api_key=key)
+    kwargs = {"api_key": key}
+    if base:
+        kwargs["base_url"] = base
+    return OpenAI(**kwargs)
 
 
 def _ask(prompt: str, use_web_search: bool = False) -> str:
     client = _get_client()
     tools = [{"type": "web_search_preview"}] if use_web_search else []
     response = client.responses.create(
-        model="gpt-5.4-mini",
+        model=os.environ.get("OPENAI_MODEL", "gpt-5.4-mini-2026-03-17"),
         input=prompt,
         tools=tools,
     )
