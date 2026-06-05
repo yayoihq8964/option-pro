@@ -62,7 +62,7 @@ export function renderOptionChain(chain) {
   }
 
   const rows = allStrikes.map((strike) => {
-    const g = groups[strike] || groups[String(strike)] || {};
+    const g = groups[strike] || groups[String(strike)] || groups[strike.toFixed(1)] || groups[strike + '.0'] || {};
     const c = g.call || {};
     const p = g.put || {};
     const atm = underlying > 0 && Math.abs(strike - underlying) < Math.max(1, underlying * 0.008);
