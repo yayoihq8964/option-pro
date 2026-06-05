@@ -17,6 +17,8 @@ export const api = {
   ivRanking: (id) => request(`/api/sectors/${encodeURIComponent(id)}/iv-ranking`),
   heatmap: (id) => request(`/api/sectors/${encodeURIComponent(id)}/heatmap`),
   earnings: () => request('/api/earnings/upcoming'),
+  analyzeAlerts: (data) => request('/api/ai/analyze-alerts', {method:'POST', body: JSON.stringify(data)}),
+  earningsCorrelation: () => request('/api/ai/earnings-correlation'),
   marketStatus: () => request('/api/market/status'),
   search: (q) => request(`/api/stocks/search?q=${encodeURIComponent(q)}`),
 };

@@ -2,6 +2,7 @@ import { api, safe } from '../api.js';
 import { renderChart } from './chart.js';
 import { renderSignals } from './signals.js';
 import { renderExpirationSelect, renderOptionChain } from './optionChain.js';
+import { renderAlertAnalysisButton } from './aiAnalysis.js';
 
 const money = n => n == null ? '—' : `$${Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 const num = n => n == null ? '—' : Number(n).toLocaleString();
@@ -92,6 +93,11 @@ async function loadOptions(ticker) {
     if (!exp) { box.innerHTML = renderOptionChain(null); return; }
     const chain = await safe(api.optionChain(ticker, exp));
     box.innerHTML = renderOptionChain(chain);
+    // Inject AI analysis button if alerts exist
+    const alerts = chain?.alerts || [];
+    if (alerts.length > 0) {
+      renderAlertAnalysisButton(box, ticker, alerts, chain.underlying_price || 0, exp);
+    }
   }
   select?.addEventListener('change', () => load(select.value));
   load(selected);

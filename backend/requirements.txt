@@ -6,3 +6,4 @@ pydantic-settings==2.7.0
 python-dotenv==1.0.1
 yfinance>=0.2.40
 lxml>=5.0
+openai>=1.80.0

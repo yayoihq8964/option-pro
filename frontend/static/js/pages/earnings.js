@@ -1,5 +1,6 @@
 import { api, safe } from '../api.js';
 import { openModal } from '../components/modal.js';
+import { renderEarningsCorrelation } from '../components/aiAnalysis.js';
 
 export async function mountEarnings(root, ctx) {
   root.innerHTML = `<main class="p-4 md:p-6 lg:p-8 space-y-8"><div><h1 class="text-3xl font-extrabold font-headline">AI Earnings Center</h1><p class="text-sm text-on-surface-variant mt-1">Upcoming earnings with live API data</p></div><div id="earnings-content"><div class="h-96 rounded-3xl skeleton"></div></div></main>`;
@@ -8,4 +9,6 @@ export async function mountEarnings(root, ctx) {
   const earnings = res.earnings || [];
   document.getElementById('earnings-content').innerHTML = `<div class="bg-surface-container-lowest rounded-3xl p-4 md:p-6 shadow-sm border border-outline-variant/10"><div class="overflow-x-auto custom-scrollbar"><table class="w-full text-sm"><thead><tr class="text-[10px] font-black uppercase tracking-widest text-on-surface-variant border-b border-outline-variant/20"><th class="text-left py-4 px-3">Ticker</th><th class="text-left py-4 px-3">Name</th><th class="text-left py-4 px-3">Earnings Date</th><th class="text-right py-4 px-3">EPS Estimate</th><th class="text-left py-4 px-3">Sector</th><th class="text-right py-4 px-3">IV</th></tr></thead><tbody class="divide-y divide-outline-variant/10">${earnings.map(e=>`<tr class="hover:bg-surface-container-low transition-colors cursor-pointer" data-ticker="${e.ticker}"><td class="py-4 px-3"><span class="font-black font-headline text-primary">${e.ticker}</span></td><td class="py-4 px-3 font-semibold">${e.name || '—'}</td><td class="py-4 px-3"><span class="px-3 py-1 rounded-full bg-primary-container text-on-primary-container text-xs font-bold">${e.earnings_date || '—'}</span></td><td class="py-4 px-3 text-right font-bold">${e.eps_estimate ?? '—'}</td><td class="py-4 px-3 text-on-surface-variant">${e.sector || '—'}</td><td class="py-4 px-3 text-right"><span class="text-xs font-bold px-2.5 py-1 rounded-lg bg-surface-container text-on-surface-variant">${e.iv ?? e.iv_rank ?? e.iv_percentile ?? '—'}</span></td></tr>`).join('') || '<tr><td colspan="6" class="p-8 text-center text-on-surface-variant">暂无财报数据</td></tr>'}</tbody></table></div></div>`;
   document.getElementById('earnings-content').addEventListener('click', e => { const r=e.target.closest('[data-ticker]'); if(r) openModal(r.dataset.ticker); });
+  // Add AI correlation analysis section above the table
+  renderEarningsCorrelation(root.querySelector('main'));
 }
