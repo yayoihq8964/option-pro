@@ -30,7 +30,7 @@ export function renderCandlestick(container, bars = [], price) {
     .map((b, i) => ({
       time:
         typeof b.t === "number"
-          ? b.t
+          ? Math.floor(b.t > 1e12 ? b.t / 1000 : b.t)
           : Math.floor(new Date(b.t).getTime() / 1000) || i + 1,
       open: +b.o,
       high: +b.h,
@@ -38,7 +38,7 @@ export function renderCandlestick(container, bars = [], price) {
       close: +b.c,
     }))
     .filter((x) => x.open && x.high && x.low && x.close);
-  s.setData(data.length ? data : mockBars(price || 118));
+  s.setData(data.length ? data : mockBars(price || 200));
   chart.timeScale().fitContent();
   const ro = new ResizeObserver(() =>
     chart.applyOptions({
@@ -56,7 +56,7 @@ export function renderCandlestick(container, bars = [], price) {
     },
   };
 }
-function mockBars(base = 118) {
+function mockBars(base = 200) {
   let p = base;
   return Array.from({ length: 80 }, (_, i) => {
     const o = p,
