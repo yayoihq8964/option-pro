@@ -10,12 +10,15 @@ from starlette.responses import Response
 
 
 class NoCacheStaticMiddleware(BaseHTTPMiddleware):
-    """Prevent browser caching of JS/CSS files during development."""
+    """Prevent browser + CDN caching of JS/CSS/HTML files."""
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
-        if request.url.path.startswith("/static/"):
+        path = request.url.path
+        if path.startswith("/static/") or path == "/" or path.endswith(".html"):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response.headers["Pragma"] = "no-cache"
+            response.headers["CDN-Cache-Control"] = "no-store"          # Cloudflare CDN
+            response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"  # CF explicit
         return response
 
 from app.api import ai, earnings, market, options, sectors, signals, stocks
