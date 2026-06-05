@@ -11,6 +11,7 @@ const large = n => n == null ? '—' : n >= 1e12 ? `$${(n/1e12).toFixed(2)}T` : 
 
 let chartHandle = null;
 let closeHandler = null;
+let chartRefreshTimer = null;
 
 export function openModal(ticker) {
   const root = document.getElementById('modal-root');
@@ -54,6 +55,7 @@ export function closeModal() {
   backdrop.classList.remove('bg-inverse-surface/10','backdrop-blur-md');
   modal.classList.add('opacity-0','scale-95');
   chartHandle?.destroy?.(); chartHandle = null;
+  if (chartRefreshTimer) { clearInterval(chartRefreshTimer); chartRefreshTimer = null; }
   document.removeEventListener('keydown', closeHandler);
   document.body.style.overflow = '';
   setTimeout(() => { root.innerHTML = ''; }, 200);
@@ -68,6 +70,10 @@ async function mountModal(ticker) {
   tf.addEventListener('click', async e => { const b=e.target.closest('[data-range]'); if(!b) return; currentRange=b.dataset.range; drawTf(); await loadChart(ticker,currentRange); });
 
   safe(api.stock(ticker)).then(d => { if (!d.__error) renderHeaderAndStats(d); });
+
+  // Auto-refresh chart every 30 minutes while modal is open
+  if (chartRefreshTimer) clearInterval(chartRefreshTimer);
+  chartRefreshTimer = setInterval(() => loadChart(ticker, currentRange), 30 * 60 * 1000);
   loadChart(ticker, currentRange);
   safe(api.signals(ticker)).then(d => { document.getElementById('modal-signals').innerHTML = renderSignals(d); });
   safe(api.topBottomSignals(ticker)).then(d => { const el = document.getElementById('top-bottom-signals'); if (el) renderTopBottomSignals(el, ticker, d); });
