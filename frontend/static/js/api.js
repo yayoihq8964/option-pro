@@ -10,7 +10,7 @@ export const api = {
   watchlist: () => request('/api/stocks/watchlist'),
   stock: (ticker) => request(`/api/stocks/${encodeURIComponent(ticker)}`),
   chart: (ticker, range = '1d') => request(`/api/stocks/${encodeURIComponent(ticker)}/chart?range=${encodeURIComponent(range)}`),
-  signals: (ticker) => request(`/api/stocks/${encodeURIComponent(ticker)}/signals`),
+  signals: (ticker) => request(`/api/signals/stock/${encodeURIComponent(ticker)}`),
   topBottomSignals: (ticker) => request(`/api/signals/stock/${encodeURIComponent(ticker)}`),
   marketTopBottomSignals: () => request('/api/signals/market'),
   analyzeTopBottomSignals: (ticker) => request(`/api/signals/stock/${encodeURIComponent(ticker)}/ai-analysis`, {method:'POST'}),

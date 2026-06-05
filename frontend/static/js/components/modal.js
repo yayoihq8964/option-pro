@@ -2,7 +2,7 @@ import { api, safe } from '../api.js';
 import { renderChart } from './chart.js';
 import { renderSignals } from './signals.js';
 import { renderTopBottomSignals } from './topBottomSignals.js';
-import { renderExpirationSelect, renderOptionChain } from './optionChain.js';
+import { renderAlerts } from './optionChain.js';
 import { renderAlertAnalysisButton } from './aiAnalysis.js';
 
 const money = n => n == null ? '—' : `$${Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
@@ -27,7 +27,7 @@ export function openModal(ticker) {
           <div id="modal-signals"><div class="rounded-[2rem] p-8 min-h-[320px] bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] flex items-center justify-center"><div class="w-6 h-6 border-2 border-white/60 border-t-transparent rounded-full animate-spin"></div></div></div>
         </section>
         <section id="top-bottom-signals"><div class="h-80 rounded-3xl skeleton"></div></section>
-        <section class="space-y-4"><div class="flex items-center justify-between gap-4 flex-wrap"><h3 class="font-headline font-extrabold text-xl">期权链</h3><div id="expiration-wrap"><div class="h-10 w-40 skeleton"></div></div></div><div id="option-chain"><div class="h-56 rounded-3xl skeleton"></div></div></section>
+        <section id="option-alerts-section"><div class="h-40 rounded-3xl skeleton"></div></section>
         <section id="modal-stats" class="space-y-6"><div class="grid grid-cols-2 md:grid-cols-4 gap-4">${Array.from({length:4}).map(()=>'<div class="h-24 rounded-3xl skeleton"></div>').join('')}</div></section>
       </div>
     </div>
@@ -71,7 +71,7 @@ async function mountModal(ticker) {
   loadChart(ticker, currentRange);
   safe(api.signals(ticker)).then(d => { document.getElementById('modal-signals').innerHTML = renderSignals(d); });
   safe(api.topBottomSignals(ticker)).then(d => { const el = document.getElementById('top-bottom-signals'); if (el) renderTopBottomSignals(el, ticker, d); });
-  loadOptions(ticker);
+  loadOptionAlerts(ticker);
 }
 
 async function loadChart(ticker, range) {
@@ -84,26 +84,18 @@ async function loadChart(ticker, range) {
   chartHandle = renderChart(el, data);
 }
 
-async function loadOptions(ticker) {
+async function loadOptionAlerts(ticker) {
+  const section = document.getElementById('option-alerts-section');
   const ex = await safe(api.expirations(ticker), { expirations: [] });
   const expirations = ex.expirations || ex.fallback?.expirations || [];
   const selected = expirations[0] || '';
-  document.getElementById('expiration-wrap').innerHTML = renderExpirationSelect(expirations, selected);
-  const select = document.getElementById('expiration-select');
-  async function load(exp) {
-    const box = document.getElementById('option-chain');
-    box.innerHTML = '<div class="h-56 rounded-3xl skeleton"></div>';
-    if (!exp) { box.innerHTML = renderOptionChain(null); return; }
-    const chain = await safe(api.optionChain(ticker, exp));
-    box.innerHTML = renderOptionChain(chain);
-    // Inject AI analysis button if alerts exist
-    const alerts = chain?.alerts || [];
-    if (alerts.length > 0) {
-      renderAlertAnalysisButton(box, ticker, alerts, chain.underlying_price || 0, exp);
-    }
-  }
-  select?.addEventListener('change', () => load(select.value));
-  load(selected);
+  if (!selected) { section.innerHTML = ''; return; }
+  const chain = await safe(api.optionChain(ticker, selected));
+  const alerts = chain?.alerts || [];
+  if (alerts.length === 0) { section.innerHTML = ''; return; }
+  // Show alerts + AI analysis button only (no option chain table)
+  section.innerHTML = renderAlerts(alerts);
+  renderAlertAnalysisButton(section, ticker, alerts, chain.underlying_price || 0, selected);
 }
 
 function renderHeaderAndStats(stock) {

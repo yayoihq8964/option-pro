@@ -113,19 +113,38 @@ async def watchlist():
 async def search_stocks(q: str = Query(..., min_length=1, max_length=50)):
     q_upper = q.upper().strip()
     q_lower = q.lower().strip()
-    # 1) Local dictionary (instant)
-    results = []
-    for ticker, name in KNOWN_TICKERS.items():
-        if q_upper in ticker or q_lower in name.lower():
-            results.append({"ticker": ticker, "name": name, "market": "stocks", "type": "CS"})
-    # Also match Chinese names from zh_names
     from app.services.zh_names import NAMES
-    for ticker, (zh_name, zh_desc) in NAMES.items():
-        if ticker not in KNOWN_TICKERS and (q_upper in ticker or q_lower in zh_name.lower() or q_lower in zh_desc.lower()):
-            results.append({"ticker": ticker, "name": zh_name, "market": "stocks", "type": "CS"})
+
+    def fuzzy(query, text):
+        """Check if all chars of query appear in text in order (fuzzy match)."""
+        it = iter(text.lower())
+        return all(c in it for c in query.lower())
+
+    # 1) Local dictionary — exact substring + fuzzy match
+    exact, fuzzy_results = [], []
+    all_tickers = {**KNOWN_TICKERS}
+    for t, (zh, _) in NAMES.items():
+        if t not in all_tickers:
+            all_tickers[t] = zh
+
+    for ticker, name in all_tickers.items():
+        zh_entry = NAMES.get(ticker)
+        zh_name = zh_entry[0] if zh_entry else ""
+        zh_desc = zh_entry[1] if zh_entry else ""
+        search_text = f"{ticker} {name} {zh_name} {zh_desc}".lower()
+
+        if q_upper == ticker or q_lower == name.lower():
+            exact.insert(0, {"ticker": ticker, "name": zh_name or name, "name_en": name, "market": "stocks", "type": "CS"})
+        elif q_upper in ticker or q_lower in search_text:
+            exact.append({"ticker": ticker, "name": zh_name or name, "name_en": name, "market": "stocks", "type": "CS"})
+        elif len(q_lower) >= 2 and (fuzzy(q_lower, ticker) or fuzzy(q_lower, name) or fuzzy(q_lower, zh_name)):
+            fuzzy_results.append({"ticker": ticker, "name": zh_name or name, "name_en": name, "market": "stocks", "type": "CS"})
+
+    results = exact + fuzzy_results
     if results:
-        return _sanitize(results[:10])
-    # 2) Fallback: try yfinance search for unknown tickers
+        return _sanitize(results[:12])
+
+    # 2) Fallback: try yfinance for completely unknown tickers
     def _yf_search():
         try:
             tk = yf.Ticker(q_upper)

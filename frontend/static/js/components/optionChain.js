@@ -19,7 +19,7 @@ export function renderExpirationSelect(expirations = [], selected = '') {
 }
 
 /** Render unusual activity alerts above the chain */
-function renderAlerts(alerts = []) {
+export function renderAlerts(alerts = []) {
   if (!alerts.length) return '';
   const meta = (a = {}) => {
     const dir = a.inferred_direction || a.signal || 'unknown';
