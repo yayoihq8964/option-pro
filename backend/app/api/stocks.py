@@ -34,6 +34,38 @@ KNOWN_TICKERS = {
     "NOW": "ServiceNow", "SNOW": "Snowflake", "PLTR": "Palantir", "NET": "Cloudflare",
     "PANW": "Palo Alto Networks", "CRWD": "CrowdStrike", "MRVL": "Marvell Technology",
     "TXN": "Texas Instruments", "LRCX": "Lam Research", "KLAC": "KLA Corp", "AMAT": "Applied Materials",
+    # Finance
+    "GS": "Goldman Sachs", "MS": "Morgan Stanley", "C": "Citigroup", "BLK": "BlackRock",
+    "SCHW": "Charles Schwab", "AXP": "American Express", "WFC": "Wells Fargo",
+    # Healthcare
+    "UNH": "UnitedHealth", "JNJ": "Johnson & Johnson", "PFE": "Pfizer", "ABBV": "AbbVie",
+    "AMGN": "Amgen", "GILD": "Gilead Sciences", "MRNA": "Moderna", "NVO": "Novo Nordisk",
+    "VRTX": "Vertex Pharma", "REGN": "Regeneron",
+    # Consumer / Retail
+    "WMT": "Walmart", "COST": "Costco", "TGT": "Target", "HD": "Home Depot", "LOW": "Lowe's",
+    "NKE": "Nike", "SBUX": "Starbucks", "MCD": "McDonald's", "PEP": "PepsiCo", "KO": "Coca-Cola",
+    "PG": "Procter & Gamble", "ABNB": "Airbnb", "BKNG": "Booking Holdings",
+    # Industrials / Transport
+    "BA": "Boeing", "CAT": "Caterpillar", "DE": "Deere", "UPS": "UPS", "FDX": "FedEx",
+    "GE": "GE Aerospace", "HON": "Honeywell", "RTX": "RTX Corp", "LMT": "Lockheed Martin",
+    # Tech / Internet
+    "UBER": "Uber", "SHOP": "Shopify", "SQ": "Block Inc", "COIN": "Coinbase",
+    "SNAP": "Snap Inc", "PINS": "Pinterest", "RBLX": "Roblox", "U": "Unity Software",
+    "DDOG": "Datadog", "MDB": "MongoDB", "ZS": "Zscaler", "OKTA": "Okta",
+    "TEAM": "Atlassian", "TWLO": "Twilio", "HUBS": "HubSpot",
+    # Energy
+    "COP": "ConocoPhillips", "SLB": "Schlumberger", "EOG": "EOG Resources",
+    "MPC": "Marathon Petroleum", "OXY": "Occidental Petroleum", "DVN": "Devon Energy",
+    # EV / Auto
+    "RIVN": "Rivian", "LCID": "Lucid Motors", "F": "Ford", "GM": "General Motors",
+    # Chinese ADRs
+    "PDD": "PDD Holdings", "JD": "JD.com", "BIDU": "Baidu", "NIO": "NIO Inc",
+    "LI": "Li Auto", "XPEV": "XPeng", "BILI": "Bilibili", "TME": "Tencent Music",
+    # ETFs
+    "IWM": "Russell 2000 ETF", "DIA": "Dow Jones ETF", "XLK": "Tech ETF",
+    "XLF": "Financials ETF", "XLE": "Energy ETF", "XLV": "Healthcare ETF",
+    "ARKK": "ARK Innovation ETF", "SOXX": "Semiconductor ETF", "GLD": "Gold ETF",
+    "TLT": "20Y Treasury ETF", "HYG": "High Yield Bond ETF",
 }
 
 
@@ -81,11 +113,31 @@ async def watchlist():
 async def search_stocks(q: str = Query(..., min_length=1, max_length=50)):
     q_upper = q.upper().strip()
     q_lower = q.lower().strip()
+    # 1) Local dictionary (instant)
     results = []
     for ticker, name in KNOWN_TICKERS.items():
         if q_upper in ticker or q_lower in name.lower():
             results.append({"ticker": ticker, "name": name, "market": "stocks", "type": "CS"})
-    return _sanitize(results[:10])
+    # Also match Chinese names from zh_names
+    from app.services.zh_names import NAMES
+    for ticker, (zh_name, zh_desc) in NAMES.items():
+        if ticker not in KNOWN_TICKERS and (q_upper in ticker or q_lower in zh_name.lower() or q_lower in zh_desc.lower()):
+            results.append({"ticker": ticker, "name": zh_name, "market": "stocks", "type": "CS"})
+    if results:
+        return _sanitize(results[:10])
+    # 2) Fallback: try yfinance search for unknown tickers
+    def _yf_search():
+        try:
+            tk = yf.Ticker(q_upper)
+            info = tk.info
+            name = info.get("shortName", "")
+            if name and info.get("regularMarketPrice"):
+                return [{"ticker": q_upper, "name": name, "market": "stocks", "type": info.get("quoteType", "CS")}]
+        except Exception:
+            pass
+        return []
+    yf_results = await asyncio.to_thread(_yf_search)
+    return _sanitize(yf_results[:10])
 
 
 @router.get("/{ticker}/signals")
