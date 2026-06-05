@@ -115,6 +115,58 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                 }
             )
 
+        # ── Detect unusual activity alerts ──
+        alerts = []
+        all_contracts = [(c, "call") for c in calls] + [(p, "put") for p in puts]
+        for contract, side in all_contracts:
+            vol = contract.get("volume") or 0
+            oi = contract.get("open_interest") or 0
+            lp = contract.get("last_price") or 0
+            iv = contract.get("implied_volatility") or 0
+            strike = contract["strike"]
+
+            reasons = []
+
+            # Rule 1: Volume/OI ratio > 3 (unusual volume relative to open interest)
+            if oi > 0 and vol / oi >= 3:
+                reasons.append(f"Vol/OI {vol/oi:.1f}x")
+
+            # Rule 2: High absolute volume
+            if vol >= 5000:
+                reasons.append(f"高成交量 {vol:,}")
+
+            # Rule 3: Large premium flow (volume × price × 100 > $500K)
+            premium = vol * lp * 100 if lp else 0
+            if premium >= 500_000:
+                reasons.append(f"大额权利金 ${premium:,.0f}")
+
+            # Rule 4: Volume spike with low OI (new position building)
+            if vol >= 1000 and oi < 500:
+                reasons.append("新仓建立")
+
+            # Rule 5: Deep OTM with high volume (speculative)
+            if price:
+                otm_pct = abs(strike - price) / price
+                if otm_pct > 0.10 and vol >= 2000:
+                    reasons.append(f"深度虚值 ({otm_pct*100:.0f}% OTM)")
+
+            if reasons:
+                alerts.append({
+                    "strike": strike,
+                    "type": side,
+                    "volume": vol,
+                    "open_interest": oi,
+                    "last_price": lp,
+                    "implied_volatility": iv,
+                    "premium_flow": round(premium, 0) if premium else None,
+                    "vol_oi_ratio": round(vol / oi, 2) if oi > 0 else None,
+                    "reasons": reasons,
+                    "signal": "bullish" if side == "call" else "bearish",
+                })
+
+        # Sort alerts by premium flow descending
+        alerts.sort(key=lambda a: a.get("premium_flow") or 0, reverse=True)
+
         strikes = sorted(set(c["strike"] for c in calls) | set(p["strike"] for p in puts))
         call_map = {c["strike"]: c for c in calls}
         put_map = {p["strike"]: p for p in puts}
@@ -128,6 +180,7 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
             "calls": calls,
             "puts": puts,
             "grouped_by_strike": grouped,
+            "alerts": alerts[:10],  # top 10 unusual activity alerts
             "data_limited": False,
         }
 
