@@ -121,7 +121,7 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
 
 
 def get_stock_iv(ticker: str) -> float | None:
-    """Get ATM implied volatility for a ticker (nearest expiration, ATM strike)."""
+    """Get meaningful ATM implied volatility using an expiration 20-60 days out."""
     symbol = ticker.upper()
 
     def load() -> float | None:
@@ -130,12 +130,35 @@ def get_stock_iv(ticker: str) -> float | None:
             exps = t.options
             if not exps:
                 return None
+
             price = float(t.fast_info.last_price)
-            chain = t.option_chain(exps[0])
+
+            # Very near-term expirations often have unusable/zero IV. Prefer an
+            # expiration around one month out for sector/stock displays.
+            target_exp = None
+            today = datetime.now().date()
+            for exp in exps:
+                exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+                days_out = (exp_date - today).days
+                if 20 <= days_out <= 60:
+                    target_exp = exp
+                    break
+            if not target_exp:
+                for exp in exps:
+                    exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+                    if (exp_date - today).days > 7:
+                        target_exp = exp
+                        break
+            if not target_exp and exps:
+                target_exp = exps[-1]
+
+            chain = t.option_chain(target_exp)
             calls = chain.calls
-            calls_sorted = calls.iloc[(calls["strike"] - price).abs().argsort()[:1]]
-            if len(calls_sorted) > 0:
-                return _safe_float(calls_sorted.iloc[0]["impliedVolatility"])
+            atm_calls = calls.iloc[(calls["strike"] - price).abs().argsort()[:5]]
+            for _, row in atm_calls.iterrows():
+                iv = _safe_float(row.get("impliedVolatility"))
+                if iv is not None and iv > 0.01:
+                    return round(iv, 4)
         except Exception:
             pass
         return None
