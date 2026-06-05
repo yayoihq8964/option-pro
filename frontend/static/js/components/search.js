@@ -1,50 +1,31 @@
-import { api } from "../api.js";
-const debounce = (fn, ms = 250) => {
-  let t;
-  return (...a) => {
-    clearTimeout(t);
-    t = setTimeout(() => fn(...a), ms);
-  };
-};
-export function mountSearch(el, onPick) {
-  el.innerHTML = `<span class="material-symbols-outlined text-primary shrink-0">search</span><input class="min-w-0 flex-1 h-11 bg-transparent border-none p-0 text-body-md font-medium text-on-surface placeholder:text-on-surface-variant/70 focus:ring-0 focus:outline-none" placeholder="搜索代码、异动或行权价..." type="text" autocomplete="off"/><div class="search-dropdown hidden"></div>`;
-  const input = el.querySelector("input"),
-    dd = el.querySelector(".search-dropdown");
-  const close = () => dd.classList.add("hidden");
-  input.addEventListener(
-    "input",
-    debounce(async () => {
-      const q = input.value.trim();
-      if (q.length < 2) {
-        close();
-        return;
-      }
-      dd.classList.remove("hidden");
-      dd.innerHTML = `<div class="p-md text-on-surface-variant">搜索中...</div>`;
+import { api } from '../api.js';
+import { openModal } from './modal.js';
+
+export function initSearch(root) {
+  if (!root) return;
+  root.innerHTML = `<div class="relative"><span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg">search</span><input id="stock-search" class="w-full bg-surface-container-low rounded-full py-2 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20" placeholder="搜索股票..."/><div id="search-results" class="hidden absolute top-11 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-outline-variant/10 overflow-hidden z-[80]"></div></div>`;
+  const input = root.querySelector('#stock-search');
+  const box = root.querySelector('#search-results');
+  let timer;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    if (q.length < 1) { box.classList.add('hidden'); return; }
+    timer = setTimeout(async () => {
       try {
-        const data = await api.searchStocks(q);
-        const rows = (data.results || []).slice(0, 8);
-        dd.innerHTML = rows.length
-          ? rows
-              .map(
-                (r) =>
-                  `<button class="w-full flex justify-between items-center px-md py-sm hover:bg-surface-container-low text-left" data-ticker="${r.ticker}"><span><b class="text-primary">${r.ticker}</b><span class="ml-sm font-medium">${r.name || ""}</span><span class="block text-label-sm text-on-surface-variant mt-1">${r.primary_exchange || r.market || ""} · ${r.type || "Equity"}</span></span><span class="material-symbols-outlined text-on-surface-variant">north_east</span></button>`,
-              )
-              .join("")
-          : `<div class="p-md text-on-surface-variant">未找到结果</div>`;
-      } catch (e) {
-        dd.innerHTML = `<div class="p-md text-error">搜索暂不可用</div>`;
-      }
-    }, 220),
-  );
-  dd.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-ticker]");
-    if (!b) return;
-    input.value = b.dataset.ticker;
-    close();
-    onPick(b.dataset.ticker);
+        const res = await api.search(q);
+        const items = res.results || res.stocks || res || [];
+        box.innerHTML = items.slice(0, 8).map(x => `<button data-ticker="${x.ticker || x.symbol}" class="w-full text-left px-4 py-3 hover:bg-surface-container-low transition-colors"><span class="font-bold">${x.ticker || x.symbol}</span><span class="text-sm text-on-surface-variant ml-2">${x.name || ''}</span></button>`).join('') || '<div class="p-4 text-sm text-on-surface-variant">无结果</div>';
+        box.classList.remove('hidden');
+      } catch { box.innerHTML = '<div class="p-4 text-sm text-error">搜索失败</div>'; box.classList.remove('hidden'); }
+    }, 180);
   });
-  document.addEventListener("click", (e) => {
-    if (!el.contains(e.target)) close();
+  box.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-ticker]');
+    if (!btn) return;
+    openModal(btn.dataset.ticker);
+    box.classList.add('hidden');
+    input.value = '';
   });
+  document.addEventListener('click', (e) => { if (!root.contains(e.target)) box.classList.add('hidden'); });
 }

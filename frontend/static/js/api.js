@@ -1,34 +1,26 @@
-const json = async (url, timeout = 30000) => {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  try {
-    const r = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    if (!r.ok) throw new Error(`${r.status} ${url}`);
-    return r.json();
-  } catch (e) {
-    clearTimeout(id);
-    throw e;
-  }
-};
+const API_BASE = '';
+
+async function request(path, options = {}) {
+  const res = await fetch(`${API_BASE}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
 export const api = {
-  searchStocks: (q) => json(`/api/stocks/search?q=${encodeURIComponent(q)}`),
-  stock: (t) => json(`/api/stocks/${encodeURIComponent(t)}`),
-  chart: (t, range = "1d") =>
-    json(
-      `/api/stocks/${encodeURIComponent(t)}/chart?range=${encodeURIComponent(range)}`,
-    ),
-  expirations: (t) => json(`/api/options/${encodeURIComponent(t)}/expirations`),
-  chain: (t, e) =>
-    json(
-      `/api/options/${encodeURIComponent(t)}/chain?expiration=${encodeURIComponent(e)}`,
-    ),
-  unusual: (type = "all", min = 1) =>
-    json(
-      `/api/options/unusual?type=${encodeURIComponent(type)}&min_vol_oi=${encodeURIComponent(min)}`,
-    ),
-  sectors: () => json("/api/sectors"),
-  ivRanking: (id) => json(`/api/sectors/${encodeURIComponent(id)}/iv-ranking`),
-  heatmap: (id) => json(`/api/sectors/${encodeURIComponent(id)}/heatmap`),
-  marketStatus: () => json("/api/market/status"),
+  watchlist: () => request('/api/stocks/watchlist'),
+  stock: (ticker) => request(`/api/stocks/${encodeURIComponent(ticker)}`),
+  chart: (ticker, range = '1d') => request(`/api/stocks/${encodeURIComponent(ticker)}/chart?range=${encodeURIComponent(range)}`),
+  signals: (ticker) => request(`/api/stocks/${encodeURIComponent(ticker)}/signals`),
+  expirations: (ticker) => request(`/api/options/${encodeURIComponent(ticker)}/expirations`),
+  optionChain: (ticker, expiration) => request(`/api/options/${encodeURIComponent(ticker)}/chain?expiration=${encodeURIComponent(expiration)}`),
+  sectors: () => request('/api/sectors'),
+  ivRanking: (id) => request(`/api/sectors/${encodeURIComponent(id)}/iv-ranking`),
+  heatmap: (id) => request(`/api/sectors/${encodeURIComponent(id)}/heatmap`),
+  earnings: () => request('/api/earnings/upcoming'),
+  marketStatus: () => request('/api/market/status'),
+  search: (q) => request(`/api/stocks/search?q=${encodeURIComponent(q)}`),
 };
+
+export function safe(promise, fallback = null) {
+  return promise.catch((error) => ({ __error: error.message, fallback }));
+}

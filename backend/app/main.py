@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import market, options, sectors, stocks
+from app.api import earnings, market, options, sectors, stocks
 
 app = FastAPI(
     title="Optix Pro Options Visualization API",
@@ -24,6 +24,7 @@ app.add_middleware(
 
 app.include_router(stocks.router)
 app.include_router(options.router)
+app.include_router(earnings.router)
 app.include_router(sectors.router)
 app.include_router(market.router)
 
