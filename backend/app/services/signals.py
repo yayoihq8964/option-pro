@@ -239,7 +239,11 @@ def compute_stock_signals(ticker: str) -> dict:
         atr = compute_atr(hist, 14)
         add("atr_percentile", _percentile_rank(atr, _last(atr)), "ATR 1年分位%")
         vol_mean = volume.rolling(20).mean().iloc[-1]; vol_std = volume.rolling(20).std().iloc[-1]
-        add("volume_zscore", (volume.iloc[-1] - vol_mean) / vol_std if vol_std and vol_std > 0 else 0, "成交量Z分数")
+        add("volume_zscore", round((volume.iloc[-1] - vol_mean) / vol_std if vol_std and vol_std > 0 else 0, 2), "成交量Z分数")
+        # Raw volume data for AI analysis context
+        signals["_volume_today"] = {"value": int(volume.iloc[-1]), "label": "今日成交量"}
+        signals["_volume_avg20"] = {"value": int(vol_mean) if vol_mean else 0, "label": "20日平均成交量"}
+        signals["_volume_ratio"] = {"value": round(volume.iloc[-1] / vol_mean, 2) if vol_mean and vol_mean > 0 else 1.0, "label": "成交量/均量比"}
         add("obv_divergence", compute_obv_divergence(close, volume), "OBV背离")
         if not spy.empty and len(spy) >= 20:
             add("relative_strength_spy", ((close.iloc[-1] / close.iloc[-20] - 1) - (spy["Close"].iloc[-1] / spy["Close"].iloc[-20] - 1)) * 100, "相对强弱(vs SPY)%")

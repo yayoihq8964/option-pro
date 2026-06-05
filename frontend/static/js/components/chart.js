@@ -1,10 +1,10 @@
 /**
- * Vanilla SVG candlestick chart with EMA20 (solid purple) + SMA50 (dashed blue).
- * Faithful port of News-feed AssetDetailModal CandlestickChart.
+ * SVG Candlestick chart with EMA20, SMA50, and Volume bars.
+ * Matches News-feed AssetDetailModal style with proper candle spacing.
  */
-const CHART_W = 800;
-const CHART_H = 300;
-const PAD = { top: 10, right: 10, bottom: 10, left: 10 };
+const W = 800, PRICE_H = 240, VOL_H = 60, GAP = 4;
+const TOTAL_H = PRICE_H + GAP + VOL_H;
+const PAD = { top: 12, right: 50, bottom: 4, left: 6 };
 
 export function renderChart(container, data = {}) {
   container.innerHTML = '';
@@ -14,91 +14,119 @@ export function renderChart(container, data = {}) {
   const sma50 = normalizeMA(Array.isArray(data) ? [] : data.sma50 || []);
 
   if (!bars.length) {
-    container.innerHTML = '<div class="h-64 md:h-80 flex items-center justify-center text-on-surface-variant text-sm">暂无数据</div>';
+    container.innerHTML = '<div class="h-80 flex items-center justify-center text-on-surface-variant text-sm">暂无数据</div>';
     return null;
   }
 
-  const allPrices = bars.flatMap(c => [c.high, c.low]);
-  const minP = Math.min(...allPrices);
-  const maxP = Math.max(...allPrices);
-  const range = maxP - minP || 1;
-  const padded = range * 0.08;
-  const low = minP - padded;
-  const high = maxP + padded;
-  const yRange = high - low;
+  // Limit to last ~80 candles for readability
+  const maxCandles = 80;
+  const visible = bars.slice(-maxCandles);
+  const visibleTimes = new Set(visible.map(b => b.time));
 
-  const toY = (v) => PAD.top + (1 - (v - low) / yRange) * (CHART_H - PAD.top - PAD.bottom);
-  const n = bars.length;
-  const barW = Math.max(2, Math.min(14, (CHART_W - PAD.left - PAD.right) / n * 0.6));
-  const step = (CHART_W - PAD.left - PAD.right) / n;
+  // Price range
+  const allPrices = visible.flatMap(c => [c.high, c.low]);
+  const minP = Math.min(...allPrices), maxP = Math.max(...allPrices);
+  const priceRange = maxP - minP || 1;
+  const pricePad = priceRange * 0.06;
+  const pLow = minP - pricePad, pHigh = maxP + pricePad;
+  const pRange = pHigh - pLow;
+
+  // Volume range
+  const allVol = visible.map(c => c.volume || 0);
+  const maxVol = Math.max(...allVol, 1);
+
+  const n = visible.length;
+  const usableW = W - PAD.left - PAD.right;
+  const step = usableW / n;
+  const barW = Math.max(3, Math.min(12, step * 0.65));
   const toX = (i) => PAD.left + step * i + step / 2;
+  const toY = (v) => PAD.top + (1 - (v - pLow) / pRange) * (PRICE_H - PAD.top - PAD.bottom);
+  const volBase = PRICE_H + GAP + VOL_H;
+  const toVolH = (v) => (v / maxVol) * (VOL_H - 4);
 
-  const yTicks = Array.from({ length: 5 }, (_, i) => {
-    const val = high - (yRange * i) / 4;
+  // Y-axis ticks (price)
+  const tickCount = 5;
+  const yTicks = Array.from({ length: tickCount }, (_, i) => {
+    const val = pHigh - (pRange * i) / (tickCount - 1);
     return { val, y: toY(val) };
   });
 
-  const timeIdx = new Map(bars.map((c, i) => [c.time, i]));
+  // MA paths
+  const timeIdx = new Map(visible.map((c, i) => [c.time, i]));
   const maPath = (pts) => {
     const mapped = pts
+      .filter(p => visibleTimes.has(p.time))
       .map(p => ({ x: timeIdx.get(p.time), y: p.value }))
       .filter(p => p.x !== undefined && Number.isFinite(p.y));
     if (mapped.length < 2) return '';
     return mapped.map((p, i) => `${i === 0 ? 'M' : 'L'}${toX(p.x).toFixed(1)},${toY(p.y).toFixed(1)}`).join(' ');
   };
 
-  const wrap = document.createElement('div');
-  wrap.className = 'w-full h-64 md:h-80 relative';
+  // Build SVG
+  let svgContent = '';
 
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'w-full h-full');
-  svg.setAttribute('viewBox', `0 0 ${CHART_W} ${CHART_H}`);
-  svg.setAttribute('preserveAspectRatio', 'none');
-
+  // Grid lines
   yTicks.forEach(t => {
-    const line = el('line', { x1: 0, x2: CHART_W, y1: t.y, y2: t.y, stroke: 'currentColor', 'stroke-width': 1 });
-    line.setAttribute('class', 'text-outline-variant/15');
-    svg.appendChild(line);
+    svgContent += `<line x1="${PAD.left}" x2="${W - PAD.right}" y1="${t.y}" y2="${t.y}" stroke="currentColor" class="text-outline-variant/10" stroke-width="0.5"/>`;
   });
 
-  const smaPath = maPath(sma50);
-  if (smaPath) {
-    svg.appendChild(el('path', { d: smaPath, fill: 'none', stroke: '#4953ac', 'stroke-width': 2.5, 'stroke-dasharray': '6,4' }));
-  }
+  // Volume/price separator
+  svgContent += `<line x1="${PAD.left}" x2="${W - PAD.right}" y1="${PRICE_H + GAP/2}" y2="${PRICE_H + GAP/2}" stroke="currentColor" class="text-outline-variant/8" stroke-width="0.5" stroke-dasharray="4,4"/>`;
 
-  const emaPath = maPath(ema20);
-  if (emaPath) {
-    svg.appendChild(el('path', { d: emaPath, fill: 'none', stroke: '#6a1cf6', 'stroke-width': 2.5 }));
-  }
+  // SMA50 (dashed, behind)
+  const sma50Path = maPath(sma50);
+  if (sma50Path) svgContent += `<path d="${sma50Path}" fill="none" stroke="#4953ac" stroke-width="2" stroke-dasharray="6,4" stroke-linecap="round"/>`;
 
-  bars.forEach((c, i) => {
+  // EMA20 (solid, front)
+  const ema20Path = maPath(ema20);
+  if (ema20Path) svgContent += `<path d="${ema20Path}" fill="none" stroke="#6a1cf6" stroke-width="2" stroke-linecap="round"/>`;
+
+  // Candles + Volume bars
+  visible.forEach((c, i) => {
     const x = toX(i);
     const isUp = c.close >= c.open;
     const color = isUp ? '#006a28' : '#b41340';
     const bodyTop = toY(Math.max(c.open, c.close));
     const bodyBot = toY(Math.min(c.open, c.close));
-    const bodyH = Math.max(1, bodyBot - bodyTop);
-    const g = el('g');
-    g.appendChild(el('line', { x1: x, x2: x, y1: toY(c.high), y2: toY(c.low), stroke: color, 'stroke-width': 1.2 }));
-    g.appendChild(el('rect', { x: x - barW / 2, y: bodyTop, width: barW, height: bodyH, fill: color, rx: 1 }));
-    svg.appendChild(g);
+    const bodyH = Math.max(1.5, bodyBot - bodyTop);
+
+    // Wick
+    svgContent += `<line x1="${x}" x2="${x}" y1="${toY(c.high)}" y2="${toY(c.low)}" stroke="${color}" stroke-width="1"/>`;
+    // Body
+    svgContent += `<rect x="${x - barW/2}" y="${bodyTop}" width="${barW}" height="${bodyH}" fill="${color}" rx="0.5"/>`;
+
+    // Volume bar
+    const vh = toVolH(c.volume || 0);
+    if (vh > 0.5) {
+      svgContent += `<rect x="${x - barW/2}" y="${volBase - vh}" width="${barW}" height="${vh}" fill="${color}" opacity="0.35" rx="0.5"/>`;
+    }
   });
 
-  const ticks = document.createElement('div');
-  ticks.className = 'absolute left-1 top-0 bottom-0 flex flex-col justify-between text-[10px] font-bold text-on-surface-variant/50 pointer-events-none py-1';
-  ticks.innerHTML = yTicks.map(t => `<span class="tabular-nums">${formatTick(t.val)}</span>`).join('');
+  // Y-axis labels (right side)
+  let labelsHTML = '';
+  yTicks.forEach(t => {
+    labelsHTML += `<text x="${W - 4}" y="${t.y + 3}" text-anchor="end" fill="currentColor" class="text-on-surface-variant/40" font-size="9" font-weight="600" font-family="Inter">${fmtTick(t.val)}</text>`;
+  });
+  // Volume label
+  labelsHTML += `<text x="${W - 4}" y="${PRICE_H + GAP + 12}" text-anchor="end" fill="currentColor" class="text-on-surface-variant/30" font-size="8" font-weight="600" font-family="Inter">VOL</text>`;
 
-  wrap.appendChild(svg);
-  wrap.appendChild(ticks);
+  const wrap = document.createElement('div');
+  wrap.className = 'w-full relative';
+  wrap.innerHTML = `
+    <svg class="w-full" viewBox="0 0 ${W} ${TOTAL_H}" preserveAspectRatio="xMidYMid meet" style="display:block">
+      ${svgContent}
+      ${labelsHTML}
+    </svg>
+    <div class="flex justify-between items-center mt-2 px-1">
+      <div class="flex gap-4 text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-tight">
+        <span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded bg-[#6a1cf6] inline-block"></span>EMA 20</span>
+        <span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded bg-[#4953ac] inline-block" style="border-top:2px dashed #4953ac;height:0"></span>SMA 50</span>
+      </div>
+      <span class="text-[10px] text-on-surface-variant/40">Vol max: ${fmtVol(maxVol)}</span>
+    </div>
+  `;
   container.appendChild(wrap);
-
   return { destroy: () => { container.innerHTML = ''; } };
-}
-
-function el(name, attrs = {}) {
-  const node = document.createElementNS('http://www.w3.org/2000/svg', name);
-  Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, String(v)));
-  return node;
 }
 
 function normalizeBars(bars) {
@@ -109,13 +137,14 @@ function normalizeBars(bars) {
       high: Number(b.h ?? b.high),
       low: Number(b.l ?? b.low),
       close: Number(b.c ?? b.close),
+      volume: Number(b.v ?? b.volume ?? 0),
     }))
-    .filter(b => Number.isFinite(Number(b.time)) && Number.isFinite(b.open) && Number.isFinite(b.high) && Number.isFinite(b.low) && Number.isFinite(b.close))
+    .filter(b => Number.isFinite(Number(b.time)) && Number.isFinite(b.close))
     .sort((a, b) => Number(a.time) - Number(b.time));
 }
 
-function normalizeMA(points) {
-  return points
+function normalizeMA(pts) {
+  return pts
     .map(p => ({
       time: String(Math.floor(Number(p.time ?? p.t) > 1e12 ? Number(p.time ?? p.t) / 1000 : Number(p.time ?? p.t))),
       value: Number(p.value),
@@ -123,8 +152,15 @@ function normalizeMA(points) {
     .filter(p => Number.isFinite(Number(p.time)) && Number.isFinite(p.value));
 }
 
-function formatTick(val) {
-  if (val >= 10000) return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (val >= 100) return val.toLocaleString(undefined, { maximumFractionDigits: 1 });
-  return val.toLocaleString(undefined, { maximumFractionDigits: 2 });
+function fmtTick(v) {
+  if (v >= 10000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (v >= 100) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function fmtVol(v) {
+  if (v >= 1e9) return (v/1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v/1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v/1e3).toFixed(0) + 'K';
+  return String(v);
 }
