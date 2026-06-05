@@ -278,29 +278,49 @@ def _compute_sma(data, period):
 @router.get("/{ticker}/chart")
 async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|1h|5d|1m|3m|1y|all)$")):
     def _work():
-        period_map = {"1d": "5d", "1h": "1mo", "5d": "1mo", "1m": "3mo", "3m": "6mo", "1y": "1y", "all": "5y"}
-        interval_map = {"1d": "5m", "1h": "1h", "5d": "30m", "1m": "1d", "3m": "1d", "1y": "1d", "all": "1wk"}
-        period = period_map.get(range, "3mo")
-        interval = interval_map.get(range, "1d")
-        # Include pre/post market for intraday timeframes
-        prepost = range in ("1d", "1h")
+        # Config per timeframe: (period, interval, include_prepost)
+        config = {
+            "1d":  ("2d",  "5m",  True),   # 2 days of 5-min with pre/post
+            "1h":  ("10d", "1h",  True),    # 10 days of hourly with pre/post
+            "5d":  ("10d", "30m", False),   # 10 days of 30-min, regular hours only
+            "1m":  ("3mo", "1d",  False),
+            "3m":  ("6mo", "1d",  False),
+            "1y":  ("1y",  "1d",  False),
+            "all": ("5y",  "1wk", False),
+        }
+        period, interval, prepost = config.get(range, ("3mo", "1d", False))
 
         tk = yf.Ticker(ticker.upper())
         hist = tk.history(period=period, interval=interval, prepost=prepost)
         if hist.empty:
             return {"bars": [], "ema20": [], "sma50": []}
 
-        bars = []
+        raw_bars = []
         for idx, row in hist.iterrows():
             t = int(idx.timestamp())
-            bars.append({
-                "t": t,
-                "o": round(float(row["Open"]), 2),
-                "h": round(float(row["High"]), 2),
-                "l": round(float(row["Low"]), 2),
-                "c": round(float(row["Close"]), 2),
-                "v": int(row["Volume"]),
-            })
+            o, h, l, c = round(float(row["Open"]), 2), round(float(row["High"]), 2), round(float(row["Low"]), 2), round(float(row["Close"]), 2)
+            v = int(row["Volume"])
+            raw_bars.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": v})
+
+        # For intraday with prepost: filter out degenerate bars
+        # Keep bars that have volume > 0 OR are within regular market hours (9:30-16:00 ET)
+        if prepost:
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            ET = _tz(_td(hours=-4))
+            filtered = []
+            for b in raw_bars:
+                dt = _dt.fromtimestamp(b["t"], tz=ET)
+                hour_min = dt.hour * 60 + dt.minute
+                is_regular = 570 <= hour_min < 960  # 9:30 to 16:00 ET
+                if is_regular:
+                    filtered.append(b)
+                elif b["v"] > 0:
+                    # Extended hours: only keep bars with actual volume
+                    b["ext"] = True
+                    filtered.append(b)
+            bars = filtered
+        else:
+            bars = raw_bars
 
         closes = [b["c"] for b in bars]
         times = [b["t"] for b in bars]

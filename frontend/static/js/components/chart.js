@@ -90,15 +90,18 @@ export function renderChart(container, data = {}) {
     const bodyBot = toY(Math.min(c.open, c.close));
     const bodyH = Math.max(1.5, bodyBot - bodyTop);
 
-    // Wick
-    svgContent += `<line x1="${x}" x2="${x}" y1="${toY(c.high)}" y2="${toY(c.low)}" stroke="${color}" stroke-width="1"/>`;
-    // Body
-    svgContent += `<rect x="${x - barW/2}" y="${bodyTop}" width="${barW}" height="${bodyH}" fill="${color}" rx="0.5"/>`;
+    const isExt = c.ext;  // extended hours bar
+    const opacity = isExt ? '0.4' : '1';
 
-    // Volume bar
+    // Wick
+    svgContent += `<line x1="${x}" x2="${x}" y1="${toY(c.high)}" y2="${toY(c.low)}" stroke="${color}" stroke-width="1" opacity="${opacity}"/>`;
+    // Body
+    svgContent += `<rect x="${x - barW/2}" y="${bodyTop}" width="${barW}" height="${bodyH}" fill="${color}" rx="0.5" opacity="${opacity}"/>`;
+
+    // Volume bar (skip if 0)
     const vh = toVolH(c.volume || 0);
     if (vh > 0.5) {
-      svgContent += `<rect x="${x - barW/2}" y="${volBase - vh}" width="${barW}" height="${vh}" fill="${color}" opacity="0.35" rx="0.5"/>`;
+      svgContent += `<rect x="${x - barW/2}" y="${volBase - vh}" width="${barW}" height="${vh}" fill="${color}" opacity="${isExt ? '0.15' : '0.35'}" rx="0.5"/>`;
     }
   });
 
@@ -138,6 +141,7 @@ function normalizeBars(bars) {
       low: Number(b.l ?? b.low),
       close: Number(b.c ?? b.close),
       volume: Number(b.v ?? b.volume ?? 0),
+      ext: !!b.ext,
     }))
     .filter(b => Number.isFinite(Number(b.time)) && Number.isFinite(b.close))
     .sort((a, b) => Number(a.time) - Number(b.time));
