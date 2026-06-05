@@ -46,7 +46,8 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
         chain = t.option_chain(expiration)
         exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
         today = datetime.now().date()
-        T = max((exp_date - today).days, 1) / 365.0
+        dte = max((exp_date - today).days, 0)
+        T = max(dte, 1) / 365.0
 
         def _resolve_iv(row, strike, last_price, stock_price, is_call=True):
             """Use yfinance IV if meaningful, else compute from last_price via BS."""
@@ -142,7 +143,7 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
 
             # Rule 4: Volume spike with low OI (new position building)
             if vol >= 1000 and oi < 500:
-                reasons.append("新仓建立")
+                reasons.append("可能新仓，待OI确认")
 
             # Rule 5: Deep OTM with high volume (speculative)
             if price:
@@ -151,9 +152,19 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     reasons.append(f"深度虚值 ({otm_pct*100:.0f}% OTM)")
 
             if reasons:
+                inferred_direction = "unknown"
+                if price:
+                    # Conservative placeholder: infer direction from type + moneyness only; side data is unavailable.
+                    if side == "call" and strike >= price * 0.98:
+                        inferred_direction = "bullish"
+                    elif side == "put" and strike <= price * 1.02:
+                        inferred_direction = "bearish"
+
                 alerts.append({
                     "strike": strike,
                     "type": side,
+                    "expiration": expiration,
+                    "dte": dte,
                     "volume": vol,
                     "open_interest": oi,
                     "last_price": lp,
@@ -161,7 +172,9 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     "premium_flow": round(premium, 0) if premium else None,
                     "vol_oi_ratio": round(vol / oi, 2) if oi > 0 else None,
                     "reasons": reasons,
-                    "signal": "bullish" if side == "call" else "bearish",
+                    "signal": inferred_direction,
+                    "inferred_direction": inferred_direction,
+                    "direction_note": "方向推断，非确定性判断；缺少bid/ask成交位置数据",
                 })
 
         # Sort alerts by premium flow descending

@@ -10,26 +10,27 @@ function row(label, value, status) {
 
 export function renderSignals(data) {
   if (!data || data.__error) {
-    return `<div class="rounded-[2rem] p-6 md:p-8 text-white bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] shadow-2xl relative overflow-hidden min-h-[320px] flex items-center justify-center text-white/70 font-medium">Technical Signals 暂不可用</div>`;
+    return `<div class="rounded-[2rem] p-6 md:p-8 text-white bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] shadow-2xl relative overflow-hidden min-h-[320px] flex items-center justify-center text-white/70 font-medium">Technical Signals（日线周期）暂不可用</div>`;
   }
   const s = data.signals || {};
   const rows = [
-    ['RSI(14)', s.rsi?.value ?? s.rsi, s.rsi?.status ?? s.rsi?.signal],
-    ['MACD', s.macd?.value ?? s.macd, s.macd?.status ?? s.macd?.signal],
-    ['EMA(20)', s.ema20?.value ?? s.ema20, s.ema20?.status ?? s.ema20?.signal],
-    ['SMA(50)', s.sma50?.value ?? s.sma50, s.sma50?.status ?? s.sma50?.signal],
-    ['Volume', s.volume?.value ?? s.volume, s.volume?.status ?? s.volume?.signal],
+    ['RSI(14, 日线)', s.rsi?.value ?? s.rsi, s.rsi?.status ?? s.rsi?.signal],
+    ['MACD(日线)', s.macd?.value ?? s.macd, s.macd?.status ?? s.macd?.signal],
+    ['EMA(20, 日线)', s.ema20?.value ?? s.ema20, s.ema20?.status ?? s.ema20?.signal],
+    ['SMA(50, 日线)', s.sma50?.value ?? s.sma50, s.sma50?.status ?? s.sma50?.signal],
+    ['Volume(日线)', s.volume?.value ?? s.volume, s.volume?.status ?? s.volume?.signal],
   ];
   const score = Math.max(0, Math.min(100, Number(data.score ?? 50)));
   const tags = data.tags || [];
+  const biasLabel = (v) => { const x = String(v || '').toLowerCase(); if (x.includes('bull') || x.includes('看多')) return '偏多'; if (x.includes('bear') || x.includes('看空')) return '偏空'; return '中性'; };
   return `<div class="rounded-[2rem] p-6 md:p-8 flex flex-col text-white bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] shadow-2xl shadow-primary/20 relative overflow-hidden min-h-[320px]">
     <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
     <div class="relative z-10 flex flex-col h-full">
       <div class="flex items-center gap-3 mb-6">
         <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-md"><span class="material-symbols-outlined text-white">psychology</span></div>
-        <h3 class="font-headline font-extrabold text-lg tracking-tight">Technical Signals</h3>
+        <div><h3 class="font-headline font-extrabold text-lg tracking-tight">Technical Signals（日线周期）</h3><p class="text-[10px] font-bold text-white/60 uppercase tracking-widest">趋势偏向 · 非买卖建议</p></div>
       </div>
-      <div class="flex justify-between items-end mb-4"><span class="text-[10px] font-bold text-white/70 uppercase tracking-[0.15em]">${data.overall || 'Neutral'}</span><span class="text-3xl font-black font-headline">${score}%</span></div>
+      <div class="flex justify-between items-end mb-4"><span class="text-[10px] font-bold text-white/70 uppercase tracking-[0.15em]">${biasLabel(data.overall)}</span><span class="text-3xl font-black font-headline">${score}%</span></div>
       <div class="h-2.5 bg-white/20 rounded-full overflow-hidden mb-4"><div class="h-full bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.6)] transition-all duration-500" style="width:${score}%"></div></div>
       <div class="space-y-3 text-sm flex-1">${rows.map(r => row(...r)).join('')}</div>
       <div class="flex gap-2 mt-6 flex-wrap">${tags.map(t => `<span class="px-3 py-1.5 bg-white/20 border border-white/10 rounded-lg text-[10px] font-bold tracking-widest uppercase">${t}</span>`).join('')}</div>

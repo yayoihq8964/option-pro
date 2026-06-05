@@ -10,8 +10,10 @@ function color(score) {
   return 'bg-error';
 }
 
-function gauge(title, score, label) {
+function gauge(title, score, label, reasons = null) {
   const s = Math.max(0, Math.min(100, Number(score || 0)));
+  const raising = reasons?.raising || [];
+  const suppressing = reasons?.suppressing || [];
   return `<div class="rounded-3xl bg-white border border-outline-variant/10 p-5 shadow-sm">
     <div class="flex items-center justify-between mb-3">
       <p class="text-[10px] font-black uppercase tracking-widest text-on-surface-variant">${title}</p>
@@ -19,6 +21,10 @@ function gauge(title, score, label) {
     </div>
     <div class="h-3 rounded-full bg-surface-container overflow-hidden"><div class="h-full ${color(s)} rounded-full transition-all" style="width:${s}%"></div></div>
     <p class="mt-2 text-xs font-bold text-on-surface-variant">${label || ''}</p>
+    ${(raising.length || suppressing.length) ? `<div class="mt-3 space-y-1 text-[11px] leading-snug">
+      ${raising.length ? `<p><b>抬高因素:</b> ${raising.join('，')}</p>` : ''}
+      ${suppressing.length ? `<p class="text-on-surface-variant"><b>压低因素:</b> ${suppressing.join('，')}</p>` : ''}
+    </div>` : ''}
   </div>`;
 }
 
@@ -66,8 +72,8 @@ export function renderTopBottomSignals(container, ticker, data) {
     return `<li class="flex items-center justify-between gap-3 py-2 border-b border-outline-variant/10 last:border-0"><span class="font-bold text-sm">${s.label || k}</span><span class="text-sm text-on-surface-variant tabular-nums">${fmt(s.value, k.includes('macd') ? 4 : 1)} → ${interpret(k, s)}</span></li>`;
   }).join('');
   container.innerHTML = `<section class="space-y-5 rounded-[2rem] bg-surface-container-lowest border border-outline-variant/10 p-5 md:p-6 shadow-sm">
-    <div class="flex items-center justify-between gap-3 flex-wrap"><h3 class="font-headline font-extrabold text-xl">Top/Bottom Signal Analysis</h3><span class="text-[10px] font-bold text-on-surface-variant">as of ${data.as_of || ''}${data._cached ? ' · cached' : ''}</span></div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">${gauge('TOP RISK', scores.top_score, scores.top_label)}${gauge('BOTTOM OPP', scores.bottom_score, scores.bottom_label)}</div>
+    <div class="flex items-center justify-between gap-3 flex-wrap"><div><h3 class="font-headline font-extrabold text-xl">Top/Bottom Signal Analysis</h3><p class="text-[10px] font-bold text-on-surface-variant mt-1">预测窗口：5-20 交易日 · 周期：日线</p></div><span class="text-[10px] font-bold text-on-surface-variant">as of ${data.as_of || ''}${data._cached ? ' · cached' : ''}</span></div>
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">${gauge('趋势偏向', data.trend_bias_score ?? 50, data.trend_bias_label || '中性')}${gauge('顶部风险', scores.top_score, scores.top_label, scores.top_reasons)}${gauge('底部机会', scores.bottom_score, scores.bottom_label, scores.bottom_reasons)}${gauge('回调买点', scores.dip_buy_quality, scores.dip_buy_label, {raising: scores.dip_buy_reasons || [], suppressing: []})}</div>
     <details open class="rounded-2xl bg-surface-container-low p-4"><summary class="cursor-pointer text-xs font-black uppercase tracking-widest text-on-surface-variant">Signal breakdown</summary><ul class="mt-3">${rows}</ul></details>
     <button id="tb-ai-btn" class="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-[#6a1cf6] to-[#4953ac] text-white font-bold text-sm hover:shadow-lg active:scale-[0.98] transition-all"><span class="material-symbols-outlined text-lg">psychology</span> AI 深度分析</button>
     <div id="tb-ai-result" class="hidden"></div>

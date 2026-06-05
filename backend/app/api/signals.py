@@ -37,7 +37,13 @@ async def stock_signals(ticker: str):
         signals = await asyncio.to_thread(compute_stock_signals, symbol)
         cached = bool(isinstance(signals, dict) and signals.pop("_cached", False))
         scores = compute_stock_scores(signals)
-        return _sanitize({"ticker": symbol, "signals": signals, "scores": scores, "as_of": today_str(), "_cached": cached})
+        rsi = (signals.get("rsi14") or {}).get("value")
+        macd = (signals.get("macd_hist") or {}).get("value")
+        rs = (signals.get("relative_strength_spy") or {}).get("value")
+        trend_bias_score = 50 + (float(rs or 0) * 2) + (float(macd or 0) * 100) + ((float(rsi or 50) - 50) * 0.4)
+        trend_bias_score = round(max(0, min(100, trend_bias_score)))
+        trend_bias_label = "偏多" if trend_bias_score >= 58 else ("偏空" if trend_bias_score <= 42 else "中性")
+        return _sanitize({"ticker": symbol, "signals": signals, "scores": scores, "trend_bias_score": trend_bias_score, "trend_bias_label": trend_bias_label, "as_of": today_str(), "_cached": cached})
     except Exception as e:
         raise HTTPException(500, str(e))
 

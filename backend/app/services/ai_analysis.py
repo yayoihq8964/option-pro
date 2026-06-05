@@ -88,62 +88,79 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
         return {"analysis": f"AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}
 
 
-SIGNALS_SYSTEM_PROMPT = """你是一个美股顶部/底部信号评估器。
+SIGNALS_SYSTEM_PROMPT = """你是一个美股个股与大盘顶部/底部信号分析器。
 
-你只能使用用户提供的结构化数据，不能引入外部行情、新闻或未经提供的事实。
+你只能基于用户提供的结构化数据判断，不得编造未提供的行情、新闻、财报、期权数据。
 
 你的任务：
-1. 判断未来 5-20 个交易日的阶段性顶部风险。
-2. 判断未来 5-20 个交易日的阶段性底部机会。
-3. 判断当前更像哪种市场状态：
-   - bullish_continuation
-   - healthy_rotation
-   - range_consolidation
-   - tactical_top_risk
-   - capitulation_bottom_setup
-   - bearish_breakdown
-   - insufficient_data
+1. 判断未来 5-20 个交易日的顶部风险。
+2. 判断未来 5-20 个交易日的底部机会。
+3. 判断回调买点质量（dip_buy_quality）。
+4. 判断当前是否更像趋势延续、健康轮动、高位震荡、趋势内回踩、阶段性顶部、回调买点、恐慌底、破位下跌或数据不足。
+5. 给出置信度，但置信度代表证据一致性，不代表真实概率。
 
-分析原则：
-1. 顶部信号必须同时考虑价格、广度、期权、波动率、信用、宏观和情绪。
-2. 底部信号必须同时考虑恐慌释放、价格确认、广度修复、波动率回落和信用稳定。
-3. 单一指标极端不能构成高置信度。
-4. 如果价格没有确认，顶部或底部置信度不得高于 65。
-5. 如果价格、广度、期权、信用四类信号至少三类同向，可以提高置信度。
-6. 如果信号互相矛盾，必须降低置信度。
-7. 如果临近非农、CPI、FOMC、重大财报、期权到期日，必须记录事件风险，并降低置信度。
-8. 如果 gamma、call wall、put wall 数据来自第三方模型，必须标记为估算信号，不能当作事实。
-9. 输出不得包含确定性交易指令。
-10. 输出必须是严格 JSON。
+硬性规则：
+1. 不得把 Call 简单当成看多，也不得把 Put 简单当成看空。
+2. 如果没有成交价相对 bid/ask 的信息，期权方向置信度不得高于 60。
+3. 如果没有到期日和 DTE，期权流只能作为弱证据。
+4. 如果只有成交量和 OI，不能确认是新仓，只能说“可能新仓，待次日 OI 确认”。
+5. 如果技术指标存在周期冲突，必须降低 data_quality，并在 data_quality_notes 中说明。
+6. 单一指标极端不能给出高置信度。
+7. 顶部信号必须同时考虑价格、成交量、相对强弱、期权、波动率、市场环境。
+8. 底部信号必须同时考虑超跌、恐慌释放、价格收复、广度修复、波动率回落。
+9. 临近财报、CPI、FOMC、非农、OpEx 等事件，必须加入 event_risks，并降低置信度。
+10. 输出必须是严格 JSON，不得包含确定性交易指令。
 
-评分规则：
-- top_risk_confidence: 0-100
-- bottom_opportunity_confidence: 0-100
-- confidence 代表证据一致性，不等于真实概率。
-- 如果数据缺失超过 30%，final_bias 必须为 insufficient_data。
-- 如果 raw_score 与最终 confidence 差距超过 15 分，必须解释原因。
-
-输出格式：
+输出字段：
 {
   "asset": "",
   "horizon": "5-20 trading days",
   "dominant_regime": "",
+  "trend_bias_confidence": 0,
   "top_risk_confidence": 0,
   "bottom_opportunity_confidence": 0,
-  "trend_quality": 0,
+  "dip_buy_quality": 0,
+  "breakdown_risk": 0,
   "data_quality": 0,
   "final_bias": "",
   "top_evidence": [],
   "bottom_evidence": [],
+  "dip_buy_evidence": [],
+  "bearish_evidence": [],
   "contradictions": [],
-  "most_important_signal": "",
-  "key_levels": {"support": [], "resistance": [], "options_levels": []},
+  "options_flow_read": {
+    "net_direction": "",
+    "confidence": 0,
+    "bullish_flow_evidence": [],
+    "bearish_flow_evidence": [],
+    "unknown_or_neutral_flow": [],
+    "warnings": []
+  },
+  "key_levels": {"support": [], "resistance": [], "vwap_levels": [], "options_levels": []},
   "confirmation_signals": [],
   "invalidation_signals": [],
   "event_risks": [],
   "data_quality_notes": [],
   "summary": ""
 }
+
+final_bias 只能从以下选项选择：
+- bullish_continuation
+- healthy_rotation
+- trend_pullback
+- range_consolidation
+- tactical_top_risk
+- dip_buy_setup
+- capitulation_bottom_setup
+- bearish_breakdown
+- insufficient_data
+
+评分纪律：
+- 如果价格没有跌破关键支撑，top_risk_confidence 不得高于 70。
+- 如果没有恐慌释放和价格收复，bottom_opportunity_confidence 不得高于 60。
+- 如果期权缺少 DTE、bid/ask、成交方向，options_flow_read.confidence 不得高于 60。
+- 如果数据周期冲突，data_quality 必须低于 75。
+- 如果 raw_score 与最终 confidence 偏离超过 15 分，必须解释原因。
 """
 
 
@@ -165,9 +182,13 @@ def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
         "raw_scores": {
             "top_score": scores.get("top_score"),
             "bottom_score": scores.get("bottom_score"),
+            "dip_buy_quality": scores.get("dip_buy_quality"),
             "data_quality_score": scores.get("data_quality"),
             "top_breakdown": scores.get("top_breakdown"),
             "bottom_breakdown": scores.get("bottom_breakdown"),
+            "dip_buy_breakdown": scores.get("dip_buy_breakdown"),
+            "top_reasons": scores.get("top_reasons"),
+            "bottom_reasons": scores.get("bottom_reasons"),
         },
         "computed_signals": signals,
         "event_check_request": "Use web search only to check upcoming FOMC, CPI, NFP, option expiration, and company earnings for this asset. Do not add external market-price facts.",
@@ -187,6 +208,8 @@ def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
         result.setdefault("asset", symbol)
         result.setdefault("horizon", "5-20 trading days")
         result.setdefault("data_quality", scores.get("data_quality"))
+        result.setdefault("dip_buy_quality", scores.get("dip_buy_quality"))
+        result.setdefault("options_flow_read", {"net_direction": "unknown", "confidence": 0, "bullish_flow_evidence": [], "bearish_flow_evidence": [], "unknown_or_neutral_flow": [], "warnings": ["未提供期权流结构化数据"]})
         _cache[cache_key] = (datetime.utcnow() + timedelta(minutes=30), result)
         return _sanitize_ai(result)
     except Exception as e:
@@ -196,14 +219,18 @@ def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
             "dominant_regime": "insufficient_data",
             "top_risk_confidence": scores.get("top_score"),
             "bottom_opportunity_confidence": scores.get("bottom_score"),
-            "trend_quality": None,
+            "trend_bias_confidence": None,
+            "dip_buy_quality": scores.get("dip_buy_quality"),
             "data_quality": scores.get("data_quality"),
             "final_bias": "insufficient_data",
             "top_evidence": [],
             "bottom_evidence": [],
+            "dip_buy_evidence": [],
+            "bearish_evidence": [],
             "contradictions": [],
             "most_important_signal": "AI analysis unavailable",
-            "key_levels": {"support": [], "resistance": [], "options_levels": []},
+            "options_flow_read": {"net_direction": "unknown", "confidence": 0, "bullish_flow_evidence": [], "bearish_flow_evidence": [], "unknown_or_neutral_flow": [], "warnings": ["AI分析暂时不可用"]},
+            "key_levels": {"support": [], "resistance": [], "vwap_levels": [], "options_levels": []},
             "confirmation_signals": [],
             "invalidation_signals": [],
             "event_risks": [],
