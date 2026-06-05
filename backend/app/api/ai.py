@@ -1,11 +1,18 @@
 from __future__ import annotations
 import asyncio
-from fastapi import APIRouter, HTTPException
+import hashlib
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.services import ai_analysis
 from app.api.stocks import _sanitize
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+
+
+def _fingerprint(request: Request) -> str:
+    """Generate a fingerprint from client IP to distinguish different users."""
+    ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
+    return hashlib.md5(ip.encode()).hexdigest()[:12]
 
 
 class AlertsRequest(BaseModel):
@@ -16,11 +23,12 @@ class AlertsRequest(BaseModel):
 
 
 @router.post("/analyze-alerts")
-async def analyze_alerts(req: AlertsRequest):
+async def analyze_alerts(req: AlertsRequest, request: Request):
     try:
+        fp = _fingerprint(request)
         result = await asyncio.to_thread(
             ai_analysis.analyze_option_alerts,
-            req.ticker, req.alerts, req.underlying_price, req.expiration
+            req.ticker, req.alerts, req.underlying_price, req.expiration, fp
         )
         return _sanitize(result)
     except Exception as e:
@@ -28,12 +36,13 @@ async def analyze_alerts(req: AlertsRequest):
 
 
 @router.get("/earnings-correlation")
-async def earnings_correlation():
+async def earnings_correlation(request: Request):
     try:
+        fp = _fingerprint(request)
         from app.api.earnings import upcoming_earnings
         data = await upcoming_earnings()
         earnings = data.get("earnings", []) if isinstance(data, dict) else []
-        result = await asyncio.to_thread(ai_analysis.analyze_earnings_correlation, earnings)
+        result = await asyncio.to_thread(ai_analysis.analyze_earnings_correlation, earnings, fp)
         return _sanitize(result)
     except Exception as e:
         raise HTTPException(500, str(e))

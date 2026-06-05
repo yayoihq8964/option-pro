@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from app.api.stocks import _sanitize
 from app.services import ai_analysis
@@ -49,15 +49,18 @@ async def stock_signals(ticker: str):
 
 
 @router.post("/stock/{ticker}/ai-analysis")
-async def stock_ai_analysis(ticker: str):
+async def stock_ai_analysis(ticker: str, request: Request):
     """LLM confidence analysis on computed signals. Triggered only by explicit user action."""
     try:
+        import hashlib
+        ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
+        fp = hashlib.md5(ip.encode()).hexdigest()[:12]
         symbol = ticker.upper().strip()
         signals = await asyncio.to_thread(compute_stock_signals, symbol)
         if isinstance(signals, dict):
             signals.pop("_cached", None)
         scores = compute_stock_scores(signals)
-        llm_result = await asyncio.to_thread(ai_analysis.analyze_signals, symbol, signals, scores)
+        llm_result = await asyncio.to_thread(ai_analysis.analyze_signals, symbol, signals, scores, fp)
         return _sanitize({**llm_result, "raw_signals": signals, "raw_scores": scores, "as_of": today_str()})
     except Exception as e:
         raise HTTPException(500, str(e))

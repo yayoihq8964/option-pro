@@ -4,7 +4,9 @@ import json, os, math
 from datetime import datetime, timedelta
 from openai import OpenAI
 
-_cache: dict[str, tuple[datetime, dict]] = {}
+# Cache: key → (expires_at, result, request_fingerprint)
+# If a different fingerprint hits the same key, refresh the analysis
+_cache: dict[str, tuple[datetime, dict, str]] = {}
 
 
 def _get_client() -> OpenAI:
@@ -53,11 +55,13 @@ def _sanitize_ai(obj):
     return obj
 
 
-def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: float, expiration: str) -> dict:
+def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: float, expiration: str, fingerprint: str = "") -> dict:
     cache_key = f"alerts:{ticker}:{expiration}"
     cached = _cache.get(cache_key)
     if cached and cached[0] > datetime.utcnow():
-        return {**cached[1], "_cached": True}
+        # Same person → return cache. Different person → refresh.
+        if not fingerprint or cached[2] == fingerprint:
+            return {**cached[1], "_cached": True}
 
     if not alerts:
         return {"analysis": "暂无异动数据可供分析", "confidence": None}
@@ -82,7 +86,7 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
     try:
         raw = _ask(prompt, use_web_search=True)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result)
+        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {"analysis": f"AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}
@@ -164,17 +168,14 @@ final_bias 只能从以下选项选择：
 """
 
 
-def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
-    """LLM confidence analysis for precomputed top/bottom signals.
-
-    The model only judges evidence consistency. Indicator computation is done in services.signals.
-    Uses web search solely to identify upcoming event risks such as FOMC, CPI, NFP, earnings.
-    """
+def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str = "") -> dict:
+    """LLM confidence analysis for precomputed top/bottom signals."""
     symbol = ticker.upper()
-    cache_key = f"signals:{symbol}:{hash(json.dumps({'signals': signals, 'scores': scores}, sort_keys=True, default=str))}"
+    cache_key = f"signals:{symbol}"
     cached = _cache.get(cache_key)
     if cached and cached[0] > datetime.utcnow():
-        return {**cached[1], "_cached": True}
+        if not fingerprint or cached[2] == fingerprint:
+            return {**cached[1], "_cached": True}
 
     data = {
         "as_of": datetime.utcnow().date().isoformat(),
@@ -210,7 +211,7 @@ def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
         result.setdefault("data_quality", scores.get("data_quality"))
         result.setdefault("dip_buy_quality", scores.get("dip_buy_quality"))
         result.setdefault("options_flow_read", {"net_direction": "unknown", "confidence": 0, "bullish_flow_evidence": [], "bearish_flow_evidence": [], "unknown_or_neutral_flow": [], "warnings": ["未提供期权流结构化数据"]})
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result)
+        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {
@@ -240,11 +241,12 @@ def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
         }
 
 
-def analyze_earnings_correlation(earnings: list[dict]) -> dict:
+def analyze_earnings_correlation(earnings: list[dict], fingerprint: str = "") -> dict:
     cache_key = "earnings_correlation"
     cached = _cache.get(cache_key)
     if cached and cached[0] > datetime.utcnow():
-        return {**cached[1], "_cached": True}
+        if not fingerprint or cached[2] == fingerprint:
+            return {**cached[1], "_cached": True}
 
     if not earnings:
         return {"summary": "暂无即将发布的财报数据", "correlations": []}
@@ -268,7 +270,7 @@ def analyze_earnings_correlation(earnings: list[dict]) -> dict:
     try:
         raw = _ask(prompt, use_web_search=True)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result)
+        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {"summary": f"AI分析暂时不可用", "correlations": [], "error": str(e)[:120]}
