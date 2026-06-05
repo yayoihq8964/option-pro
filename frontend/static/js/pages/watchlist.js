@@ -1,26 +1,39 @@
 import { api, safe } from '../api.js';
 import { openModal } from '../components/modal.js';
 
-const spark = (seed) => Array.from({length:7}, (_,i) => 30 + (((seed || 'X').charCodeAt(i % (seed || 'X').length) * (i+3) + i*17) % 70));
-const price = n => n == null ? '—' : Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
+const price = n => n == null ? '—' : `$${Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}`;
 
-function stockCard(s) {
+function stockBlock(s) {
   const pct = Number(s.change_percent ?? 0), pos = pct > 0, neg = pct < 0;
-  const bars = (s.spark && s.spark.length ? s.spark : spark(s.ticker)).slice(0,7);
-  return `<button data-ticker="${s.ticker}" class="w-full text-left bg-surface-container-lowest rounded-2xl p-5 space-y-3 cursor-pointer hover:shadow-lg hover:-translate-y-0.5 transition-all active:scale-[0.98]">
-    <div class="flex items-center justify-between"><span class="text-xs font-bold text-on-surface-variant uppercase tracking-wider">${s.ticker}</span><span class="text-xs font-bold px-2 py-0.5 rounded-full ${pos?'bg-tertiary-container text-on-tertiary-container':neg?'bg-error-container text-on-error-container':'bg-surface-container text-on-surface-variant'}">${pos?'+':''}${pct.toFixed(2)}%</span></div>
-    <p class="text-2xl font-black tracking-tight">${price(s.price)}</p>
-    <div class="flex items-end gap-0.5 h-8">${bars.map((h,i)=>`<div class="flex-1 rounded-sm ${i===bars.length-1?(pos?'bg-tertiary':neg?'bg-error':'bg-slate-300'):(pos?'bg-tertiary/30':neg?'bg-error/30':'bg-slate-200')}" style="height:${h}%"></div>`).join('')}</div>
+  const tone = pos
+    ? 'bg-tertiary-container text-on-tertiary-container'
+    : neg
+      ? 'bg-error-container text-on-error-container'
+      : 'bg-surface-container text-on-surface-variant';
+  return `<button data-ticker="${s.ticker}" class="w-24 h-24 md:w-28 md:h-28 rounded-2xl flex flex-col items-center justify-center gap-1 cursor-pointer hover:shadow-lg hover:-translate-y-0.5 transition-all active:scale-[0.98] ${tone}">
+    <span class="text-sm font-black">${s.ticker}</span>
+    <span class="text-xs font-bold">${pos?'+':''}${pct.toFixed(2)}%</span>
+    <span class="text-xs font-semibold opacity-80">${price(s.price)}</span>
   </button>`;
 }
 
+function sectorGroup(group) {
+  return `<section class="space-y-3">
+    <div class="flex items-center gap-3">
+      <h2 class="text-lg md:text-xl font-extrabold font-headline">${group.name}</h2>
+      <span class="text-[10px] font-bold text-on-surface-variant bg-surface-container px-2 py-1 rounded-full">${(group.stocks || []).length} stocks</span>
+    </div>
+    <div class="flex flex-wrap gap-3 md:gap-4">${(group.stocks || []).map(stockBlock).join('')}</div>
+  </section>`;
+}
+
 export async function mountWatchlist(root, ctx) {
-  root.innerHTML = `<div class="flex gap-0"><main class="flex-1 xl:mr-80 p-4 md:p-6 lg:p-8 space-y-8"><section><div class="flex items-center justify-between mb-6"><h1 class="text-3xl font-extrabold font-headline">股票自选</h1><span class="text-xs text-on-surface-variant">${new Date().toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span></div><div id="watch-grid" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></div></section></main><aside class="hidden xl:block fixed right-0 top-16 w-80 h-[calc(100vh-64px)] p-6 bg-surface-container-low overflow-y-auto custom-scrollbar z-40"><div id="watch-sidebar" class="space-y-8"></div></aside></div>`;
+  root.innerHTML = `<div class="flex gap-0"><main class="flex-1 xl:mr-80 p-4 md:p-6 lg:p-8 space-y-8"><section><div class="flex items-center justify-between mb-6"><h1 class="text-3xl font-extrabold font-headline">市场总览</h1><span class="text-xs text-on-surface-variant">${new Date().toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span></div><div id="watch-groups" class="space-y-8"></div></section></main><aside class="hidden xl:block fixed right-0 top-16 w-80 h-[calc(100vh-64px)] p-6 bg-surface-container-low overflow-y-auto custom-scrollbar z-40"><div id="watch-sidebar" class="space-y-8"></div></aside></div>`;
   const [wl, status, earnings, sectors] = await Promise.all([safe(api.watchlist()), safe(api.marketStatus()), safe(api.earnings()), safe(api.sectors())]);
   if (!ctx.isCurrent()) return;
-  const stocks = wl.stocks || [];
-  document.getElementById('watch-grid').innerHTML = stocks.map(stockCard).join('') || '<div class="col-span-full p-8 text-center text-on-surface-variant bg-white rounded-2xl">暂无自选股票</div>';
-  root.querySelector('#watch-grid').addEventListener('click', e => { const b=e.target.closest('[data-ticker]'); if(b) openModal(b.dataset.ticker); });
+  const groups = wl.groups || [];
+  document.getElementById('watch-groups').innerHTML = groups.map(sectorGroup).join('') || '<div class="p-8 text-center text-on-surface-variant bg-white rounded-2xl">暂无市场数据</div>';
+  root.querySelector('#watch-groups').addEventListener('click', e => { const b=e.target.closest('[data-ticker]'); if(b) openModal(b.dataset.ticker); });
   document.getElementById('watch-sidebar').innerHTML = sidebar(status, earnings, sectors);
 }
 

@@ -77,7 +77,7 @@ async function loadChart(ticker, range) {
   chartHandle?.destroy?.(); chartHandle = null;
   const data = await safe(api.chart(ticker, range));
   if (data.__error) { el.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-error">K线加载失败</div>'; return; }
-  chartHandle = renderChart(el, data.bars || []);
+  chartHandle = renderChart(el, data);
 }
 
 async function loadOptions(ticker) {

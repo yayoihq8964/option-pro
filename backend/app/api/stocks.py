@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import math
-from datetime import date, timedelta
 from typing import Any
 
 import yfinance as yf
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
-from app.models.schemas import BarsResponse, StockOverview, TickerSearchResult
-from app.services.cache import cache
-from app.services.massive import MassiveClient
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
-
-WATCHLIST = ["NVDA", "TSLA", "AAPL", "AMD", "AMZN", "META", "MSFT", "SPY", "QQQ", "GOOGL"]
 
 
 def _sanitize(obj):
@@ -28,80 +22,68 @@ def _sanitize(obj):
     return obj
 
 
-def _snapshot_payload(data: dict[str, Any]) -> dict[str, Any]:
-    return data.get("ticker") or data.get("results") or data
-
-
-def _last_price(snap: dict[str, Any]) -> float | None:
-    for path in (("lastTrade", "p"), ("lastQuote", "P"), ("day", "c"), ("min", "c")):
-        cur: Any = snap
-        for key in path:
-            cur = cur.get(key) if isinstance(cur, dict) else None
-        if cur is not None:
-            return float(cur)
-    return None
-
-
-def _change(snap: dict[str, Any], price: float | None) -> tuple[float | None, float | None, float | None]:
-    prev = (snap.get("prevDay") or {}).get("c")
-    if price is None or prev in (None, 0):
-        return None, None, prev
-    change = price - float(prev)
-    return round(change, 4), round(change / float(prev) * 100, 4), float(prev)
+KNOWN_TICKERS = {
+    "NVDA": "Nvidia Corp", "TSLA": "Tesla Inc", "AAPL": "Apple Inc", "AMD": "AMD Inc",
+    "AMZN": "Amazon.com", "META": "Meta Platforms", "MSFT": "Microsoft Corp", "GOOGL": "Alphabet Inc",
+    "SPY": "SPDR S&P 500 ETF", "QQQ": "Invesco QQQ Trust", "TSM": "Taiwan Semiconductor",
+    "AVGO": "Broadcom Inc", "ASML": "ASML Holdings", "MU": "Micron Technology", "INTC": "Intel Corp",
+    "ARM": "Arm Holdings", "QCOM": "Qualcomm", "CRM": "Salesforce", "ADBE": "Adobe Inc",
+    "ORCL": "Oracle Corp", "NFLX": "Netflix", "DIS": "Disney", "BABA": "Alibaba",
+    "LLY": "Eli Lilly", "XOM": "Exxon Mobil", "CVX": "Chevron", "JPM": "JPMorgan Chase",
+    "V": "Visa Inc", "MA": "Mastercard", "BAC": "Bank of America",
+    "NOW": "ServiceNow", "SNOW": "Snowflake", "PLTR": "Palantir", "NET": "Cloudflare",
+    "PANW": "Palo Alto Networks", "CRWD": "CrowdStrike", "MRVL": "Marvell Technology",
+    "TXN": "Texas Instruments", "LRCX": "Lam Research", "KLAC": "KLA Corp", "AMAT": "Applied Materials",
+}
 
 
 @router.get("/watchlist")
 async def watchlist():
-    """Return batch stock data for default watchlist with 7-day spark bars."""
+    from app.services.sectors import SECTORS
 
-    async def fetch_one(ticker: str):
+    all_tickers = []
+    for sec in SECTORS.values():
+        all_tickers.extend(sec["tickers"])
+    all_tickers = list(dict.fromkeys(all_tickers))
+
+    async def fetch_one(ticker):
         def _work():
             try:
                 tk = yf.Ticker(ticker)
                 info = tk.fast_info
-                hist = tk.history(period="7d")
-                bars = [round(float(row["Close"]), 2) for _, row in hist.iterrows()] if not hist.empty else []
                 price = float(info.last_price)
                 prev = float(info.previous_close) if info.previous_close else price
-                mc = float(info.market_cap) if info.market_cap else None
-                if mc is not None and (math.isnan(mc) or math.isinf(mc)):
-                    mc = None
-                chg = round(price - prev, 2) if prev else 0
-                chg_pct = round((price - prev) / prev * 100, 2) if prev and prev != 0 else 0
-                if math.isnan(chg): chg = 0
-                if math.isnan(chg_pct): chg_pct = 0
                 return {
                     "ticker": ticker,
-                    "name": tk.info.get("shortName", ticker),
                     "price": round(price, 2),
-                    "change": chg,
-                    "change_percent": chg_pct,
-                    "market_cap": mc,
-                    "spark": bars[-7:],
+                    "change_percent": round((price - prev) / prev * 100, 2) if prev else 0,
                 }
             except Exception:
                 return None
 
         return await asyncio.to_thread(_work)
 
-    results = await asyncio.gather(*[fetch_one(t) for t in WATCHLIST], return_exceptions=True)
-    stocks = [r for r in results if isinstance(r, dict)]
-    return _sanitize({"stocks": stocks})
+    results = await asyncio.gather(*[fetch_one(t) for t in all_tickers], return_exceptions=True)
+    price_map = {r["ticker"]: r for r in results if isinstance(r, dict)}
+
+    groups = []
+    for sec_id, sec in SECTORS.items():
+        items = [price_map[t] for t in sec["tickers"] if t in price_map]
+        if items:
+            groups.append({"id": sec_id, "name": sec["name"], "stocks": items})
+
+    return _sanitize({"groups": groups})
 
 
-@router.get("/search", response_model=list[TickerSearchResult])
+@router.get("/search")
 async def search_stocks(q: str = Query(..., min_length=1, max_length=50)):
-    client = MassiveClient()
-    data = await cache.get_or_set(f"ticker_search:{q.lower()}", 300, lambda: client.ticker_search(q))
-    return [
-        TickerSearchResult(
-            ticker=item.get("ticker", ""),
-            name=item.get("name"),
-            market=item.get("market"),
-            type=item.get("type"),
-        )
-        for item in data.get("results", [])
-    ]
+    q_upper = q.upper().strip()
+    q_lower = q.lower().strip()
+    results = []
+    for ticker, name in KNOWN_TICKERS.items():
+        if q_upper in ticker or q_lower in name.lower():
+            results.append({"ticker": ticker, "name": name, "market": "stocks", "type": "CS"})
+    return _sanitize(results[:10])
 
 
 @router.get("/{ticker}/signals")
@@ -231,61 +213,96 @@ async def stock_signals(ticker: str):
     return _sanitize(result)
 
 
-@router.get("/{ticker}", response_model=StockOverview)
+@router.get("/{ticker}")
 async def stock_overview(ticker: str):
-    symbol = ticker.upper()
-    client = MassiveClient()
-    details_data = await cache.get_or_set(f"ticker_details:{symbol}", 300, lambda: client.ticker_details(symbol))
-    prev_data = await cache.get_or_set(f"aggs_prev:{symbol}", 60, lambda: client.aggs_prev(symbol))
-    details = details_data.get("results") or {}
-    prev = (prev_data.get("results") or [{}])[0]
-    if not prev:
-        raise HTTPException(status_code=404, detail=f"No previous day aggregate found for {symbol}")
+    def _work():
+        tk = yf.Ticker(ticker.upper())
+        info = tk.info
+        fi = tk.fast_info
+        last_price = float(fi.last_price)
+        prev_close = float(fi.previous_close)
+        return {
+            "ticker": ticker.upper(),
+            "name": info.get("shortName", ticker.upper()),
+            "price": round(last_price, 2),
+            "change": round(last_price - prev_close, 2),
+            "change_percent": round((last_price - prev_close) / prev_close * 100, 2) if prev_close else 0,
+            "volume": int(fi.last_volume) if fi.last_volume else None,
+            "market_cap": float(fi.market_cap) if fi.market_cap else None,
+            "prev_close": round(prev_close, 2),
+            "high": info.get("dayHigh"),
+            "low": info.get("dayLow"),
+            "open": info.get("open"),
+            "description": info.get("longBusinessSummary", ""),
+            "sic_description": info.get("industry", ""),
+            "pe_ratio": info.get("trailingPE"),
+            "dividend_yield": info.get("dividendYield"),
+            "year_high": info.get("fiftyTwoWeekHigh"),
+            "year_low": info.get("fiftyTwoWeekLow"),
+        }
 
-    open_price = prev.get("o")
-    close_price = prev.get("c")
-    change = close_price - open_price if close_price is not None and open_price is not None else None
-    change_pct = (change / open_price * 100) if change is not None and open_price not in (None, 0) else None
-    return StockOverview(
-        ticker=symbol,
-        name=details.get("name"),
-        price=close_price,
-        change=round(change, 4) if change is not None else None,
-        change_percent=round(change_pct, 4) if change_pct is not None else None,
-        volume=prev.get("v"),
-        market_cap=details.get("market_cap"),
-        prev_close=close_price,
-        high=prev.get("h"),
-        low=prev.get("l"),
-        open=open_price,
-        description=details.get("description"),
-        sic_code=details.get("sic_code"),
-        sic_description=details.get("sic_description"),
-    )
+    return _sanitize(await asyncio.to_thread(_work))
 
 
-def _range_params(range_: str) -> tuple[int, str, date, date]:
-    today = date.today()
-    if range_ == "1d":
-        return 5, "minute", today - timedelta(days=3), today
-    if range_ == "5d":
-        return 30, "minute", today - timedelta(days=8), today
-    if range_ == "1m":
-        return 1, "day", today - timedelta(days=35), today
-    if range_ == "3m":
-        return 1, "day", today - timedelta(days=100), today
-    if range_ == "1y":
-        return 1, "day", today - timedelta(days=370), today
-    if range_ == "all":
-        return 1, "week", today - timedelta(days=3650), today
-    return 1, "day", today - timedelta(days=35), today
+def _compute_ema(data, period):
+    if len(data) < period:
+        return []
+    k = 2 / (period + 1)
+    result = []
+    prev = sum(data[:period]) / period
+    result.append(prev)
+    for i in range(period, len(data)):
+        prev = data[i] * k + prev * (1 - k)
+        result.append(prev)
+    return result
 
 
-@router.get("/{ticker}/chart", response_model=BarsResponse)
+def _compute_sma(data, period):
+    if len(data) < period:
+        return []
+    result = []
+    s = sum(data[:period])
+    result.append(s / period)
+    for i in range(period, len(data)):
+        s += data[i] - data[i - period]
+        result.append(s / period)
+    return result
+
+
+@router.get("/{ticker}/chart")
 async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|5d|1m|3m|1y|all)$")):
-    symbol = ticker.upper()
-    multiplier, timespan, start, end = _range_params(range)
-    client = MassiveClient()
-    key = f"aggs:{symbol}:{range}"
-    data = await cache.get_or_set(key, 60, lambda: client.aggs(symbol, multiplier, timespan, start.isoformat(), end.isoformat()))
-    return BarsResponse(bars=[{"t": b["t"], "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b["v"]} for b in data.get("results", [])])
+    def _work():
+        period_map = {"1d": "5d", "5d": "1mo", "1m": "3mo", "1y": "1y", "all": "5y"}
+        interval_map = {"1d": "5m", "5d": "30m", "1m": "1d", "1y": "1d", "all": "1wk"}
+        period = period_map.get(range, "3mo")
+        interval = interval_map.get(range, "1d")
+
+        tk = yf.Ticker(ticker.upper())
+        hist = tk.history(period=period, interval=interval)
+        if hist.empty:
+            return {"bars": [], "ema20": [], "sma50": []}
+
+        bars = []
+        for idx, row in hist.iterrows():
+            t = int(idx.timestamp())
+            bars.append({
+                "t": t,
+                "o": round(float(row["Open"]), 2),
+                "h": round(float(row["High"]), 2),
+                "l": round(float(row["Low"]), 2),
+                "c": round(float(row["Close"]), 2),
+                "v": int(row["Volume"]),
+            })
+
+        closes = [b["c"] for b in bars]
+        times = [b["t"] for b in bars]
+
+        ema20 = _compute_ema(closes, 20)
+        sma50 = _compute_sma(closes, 50)
+
+        ema20_data = [{"time": times[i + len(closes) - len(ema20)], "value": round(v, 2)} for i, v in enumerate(ema20)]
+        sma50_data = [{"time": times[i + len(closes) - len(sma50)], "value": round(v, 2)} for i, v in enumerate(sma50)]
+
+        return {"bars": bars, "ema20": ema20_data, "sma50": sma50_data}
+
+    return _sanitize(await asyncio.to_thread(_work))
