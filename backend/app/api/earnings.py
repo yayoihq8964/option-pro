@@ -12,21 +12,24 @@ from app.services.cache import cache
 router = APIRouter(prefix="/api/earnings", tags=["earnings"])
 
 EARNINGS_TICKERS = [
-    "NVDA",
-    "TSLA",
-    "AAPL",
-    "AMD",
-    "AMZN",
-    "META",
-    "MSFT",
-    "GOOGL",
-    "DIS",
-    "BABA",
-    "NFLX",
-    "CRM",
-    "ORCL",
-    "ADBE",
-    "COST",
+    # Magnificent 7
+    "NVDA", "TSLA", "AAPL", "AMZN", "META", "MSFT", "GOOGL",
+    # Semiconductors
+    "AMD", "AVGO", "TSM", "ASML", "MU", "INTC", "ARM", "QCOM", "MRVL", "AMAT", "LRCX", "KLAC",
+    # Software / Cloud
+    "CRM", "ORCL", "ADBE", "NOW", "SNOW", "PLTR", "NET", "PANW", "CRWD",
+    # Consumer / Media
+    "NFLX", "DIS", "BABA", "COST", "WMT", "TGT", "NKE", "SBUX", "MCD",
+    # Finance
+    "JPM", "GS", "MS", "V", "MA", "BAC", "C", "BLK",
+    # Biotech / Pharma
+    "LLY", "NVO", "ABBV", "AMGN", "GILD", "MRNA", "PFE", "JNJ", "UNH",
+    # Energy
+    "XOM", "CVX", "COP", "SLB",
+    # Industrials / Others
+    "BA", "CAT", "DE", "UPS", "FDX",
+    # Chinese ADRs
+    "PDD", "JD", "BIDU", "NIO", "LI", "XPEV",
 ]
 
 

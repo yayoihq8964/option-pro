@@ -276,15 +276,17 @@ def _compute_sma(data, period):
 
 
 @router.get("/{ticker}/chart")
-async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|5d|1m|3m|1y|all)$")):
+async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|1h|5d|1m|3m|1y|all)$")):
     def _work():
-        period_map = {"1d": "5d", "5d": "1mo", "1m": "3mo", "1y": "1y", "all": "5y"}
-        interval_map = {"1d": "5m", "5d": "30m", "1m": "1d", "1y": "1d", "all": "1wk"}
+        period_map = {"1d": "5d", "1h": "1mo", "5d": "1mo", "1m": "3mo", "3m": "6mo", "1y": "1y", "all": "5y"}
+        interval_map = {"1d": "5m", "1h": "1h", "5d": "30m", "1m": "1d", "3m": "1d", "1y": "1d", "all": "1wk"}
         period = period_map.get(range, "3mo")
         interval = interval_map.get(range, "1d")
+        # Include pre/post market for intraday timeframes
+        prepost = range in ("1d", "1h")
 
         tk = yf.Ticker(ticker.upper())
-        hist = tk.history(period=period, interval=interval)
+        hist = tk.history(period=period, interval=interval, prepost=prepost)
         if hist.empty:
             return {"bars": [], "ema20": [], "sma50": []}
 

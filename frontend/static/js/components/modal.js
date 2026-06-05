@@ -60,7 +60,7 @@ export function closeModal() {
 }
 
 async function mountModal(ticker) {
-  const ranges = ['1d','5d','1m'];
+  const ranges = ['1d','1h','5d','1m','1y'];
   let currentRange = '1d';
   const tf = document.getElementById('tf-buttons');
   const drawTf = () => tf.innerHTML = ranges.map(r => `<button data-range="${r}" class="px-4 py-1.5 rounded-full text-xs font-bold transition-all ${r===currentRange?'bg-primary text-on-primary shadow-sm':'text-on-surface-variant hover:bg-surface-container'}">${r.toUpperCase()}</button>`).join('');
