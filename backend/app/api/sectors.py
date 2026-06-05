@@ -17,9 +17,9 @@ def ensure_sector(sector_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"Unknown sector: {sector_id}")
 
 
-@router.get("", response_model=list[Sector])
+@router.get("")
 async def list_sectors():
-    return [Sector(id=id_, name=data["name"], tickers=data["tickers"]) for id_, data in SECTORS.items()]
+    return {"sectors": [{"id": id_, "name": data["name"], "tickers": data["tickers"]} for id_, data in SECTORS.items()]}
 
 
 @router.get("/{sector_id}/iv-ranking")

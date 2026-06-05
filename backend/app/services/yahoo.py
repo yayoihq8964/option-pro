@@ -44,6 +44,20 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
             price = None
 
         chain = t.option_chain(expiration)
+        exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
+        today = datetime.now().date()
+        T = max((exp_date - today).days, 1) / 365.0
+
+        def _resolve_iv(row, strike, last_price, stock_price, is_call=True):
+            """Use yfinance IV if meaningful, else compute from last_price via BS."""
+            iv = _safe_float(row.get("impliedVolatility"))
+            if iv is not None and iv > 0.05:
+                return iv
+            if last_price and last_price > 0.01 and stock_price and stock_price > 0:
+                computed = compute_iv(last_price, stock_price, strike, T, r=0.05, is_call=is_call)
+                if computed and 0.05 < computed < 3.0:
+                    return computed
+            return iv  # return raw even if low
 
         calls = []
         for _, row in chain.calls.iterrows():
@@ -66,7 +80,7 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     "day_change_percent": _safe_float(row.get("percentChange")),
                     "volume": _safe_int(row.get("volume")),
                     "open_interest": _safe_int(row.get("openInterest")),
-                    "implied_volatility": _safe_float(row.get("impliedVolatility")),
+                    "implied_volatility": _resolve_iv(row, strike, last_price, price, is_call=True),
                     "in_the_money": bool(row.get("inTheMoney", False)),
                     "break_even": strike + (last_price or 0),
                     "break_even_price": strike + (last_price or 0),
@@ -94,7 +108,7 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     "day_change_percent": _safe_float(row.get("percentChange")),
                     "volume": _safe_int(row.get("volume")),
                     "open_interest": _safe_int(row.get("openInterest")),
-                    "implied_volatility": _safe_float(row.get("impliedVolatility")),
+                    "implied_volatility": _resolve_iv(row, strike, last_price, price, is_call=False),
                     "in_the_money": bool(row.get("inTheMoney", False)),
                     "break_even": strike - (last_price or 0),
                     "break_even_price": strike - (last_price or 0),
@@ -155,10 +169,23 @@ def get_stock_iv(ticker: str) -> float | None:
             chain = t.option_chain(target_exp)
             calls = chain.calls
             atm_calls = calls.iloc[(calls["strike"] - price).abs().argsort()[:5]]
+
+            # 1) Try yfinance IV first (must be >10% to be realistic for stocks)
             for _, row in atm_calls.iterrows():
                 iv = _safe_float(row.get("impliedVolatility"))
-                if iv is not None and iv > 0.01:
+                if iv is not None and iv > 0.10:
                     return round(iv, 4)
+
+            # 2) Fallback: compute IV from last_price via Black-Scholes
+            exp_date = datetime.strptime(target_exp, "%Y-%m-%d").date()
+            T = max((exp_date - today).days, 1) / 365.0
+            for _, row in atm_calls.iterrows():
+                last = _safe_float(row.get("lastPrice"))
+                strike = _safe_float(row.get("strike"))
+                if last and last > 0.01 and strike:
+                    computed = compute_iv(last, price, strike, T, r=0.05, is_call=True)
+                    if computed and 0.05 < computed < 3.0:
+                        return round(computed, 4)
         except Exception:
             pass
         return None
@@ -195,3 +222,52 @@ def _mid(bid, ask) -> float | None:
     if b is not None and a is not None and b > 0 and a > 0:
         return round((b + a) / 2, 4)
     return None
+
+
+# ── Black-Scholes IV solver (for after-hours when yfinance IV ≈ 0) ──────────
+
+from math import log, sqrt, exp, pi, erf
+
+def _norm_cdf(x):
+    return (1 + erf(x / sqrt(2))) / 2
+
+def _norm_pdf(x):
+    return exp(-x * x / 2) / sqrt(2 * pi)
+
+def _bs_call(S, K, T, r, sigma):
+    if T <= 0 or sigma <= 0:
+        return max(S - K, 0)
+    d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrt(T))
+    d2 = d1 - sigma * sqrt(T)
+    return S * _norm_cdf(d1) - K * exp(-r * T) * _norm_cdf(d2)
+
+def compute_iv(option_price, S, K, T, r=0.05, is_call=True):
+    """Newton's method to solve for implied volatility from option price."""
+    if option_price <= 0 or S <= 0 or K <= 0 or T <= 0:
+        return None
+    # Intrinsic value check
+    intrinsic = max(S - K, 0) if is_call else max(K - S, 0)
+    if option_price < intrinsic * 0.9:
+        return None
+
+    sigma = 0.3  # initial guess
+    for _ in range(50):
+        if is_call:
+            bs = _bs_call(S, K, T, r, sigma)
+        else:
+            bs = _bs_call(S, K, T, r, sigma) - S + K * exp(-r * T)
+
+        d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrt(T))
+        vega = S * sqrt(T) * _norm_pdf(d1)
+
+        if abs(vega) < 1e-12:
+            break
+        sigma -= (bs - option_price) / vega
+        if sigma <= 0.001:
+            sigma = 0.001
+        if sigma > 5.0:
+            return None
+        if abs(bs - option_price) < 0.001:
+            break
+
+    return round(sigma, 4) if 0.001 < sigma < 5.0 else None
