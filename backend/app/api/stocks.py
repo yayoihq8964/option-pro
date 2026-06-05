@@ -53,8 +53,10 @@ async def watchlist():
                 info = tk.fast_info
                 price = float(info.last_price)
                 prev = float(info.previous_close) if info.previous_close else price
+                from app.services.zh_names import get_zh_name
                 return {
                     "ticker": ticker,
+                    "name": get_zh_name(ticker) or ticker,
                     "price": round(price, 2),
                     "change_percent": round((price - prev) / prev * 100, 2) if prev else 0,
                 }
@@ -221,9 +223,12 @@ async def stock_overview(ticker: str):
         fi = tk.fast_info
         last_price = float(fi.last_price)
         prev_close = float(fi.previous_close)
+        from app.services.zh_names import get_zh_info
+        zh = get_zh_info(ticker.upper())
         return {
             "ticker": ticker.upper(),
-            "name": info.get("shortName", ticker.upper()),
+            "name": zh.get("name_zh") or info.get("shortName", ticker.upper()),
+            "name_en": info.get("shortName", ticker.upper()),
             "price": round(last_price, 2),
             "change": round(last_price - prev_close, 2),
             "change_percent": round((last_price - prev_close) / prev_close * 100, 2) if prev_close else 0,
@@ -233,7 +238,8 @@ async def stock_overview(ticker: str):
             "high": info.get("dayHigh"),
             "low": info.get("dayLow"),
             "open": info.get("open"),
-            "description": info.get("longBusinessSummary", ""),
+            "description": zh.get("description_zh") or info.get("longBusinessSummary", ""),
+            "description_en": info.get("longBusinessSummary", ""),
             "sic_description": info.get("industry", ""),
             "pe_ratio": info.get("trailingPE"),
             "dividend_yield": info.get("dividendYield"),
