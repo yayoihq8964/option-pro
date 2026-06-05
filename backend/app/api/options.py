@@ -79,9 +79,10 @@ async def expirations(ticker: str):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/{ticker}/chain", response_model=OptionChainResponse)
+@router.get("/{ticker}/chain")
 async def option_chain(ticker: str, expiration: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
     try:
-        return await asyncio.to_thread(yahoo.get_option_chain, ticker, expiration)
+        from app.api.stocks import _sanitize
+        return _sanitize(await asyncio.to_thread(yahoo.get_option_chain, ticker, expiration))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
