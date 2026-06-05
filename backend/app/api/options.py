@@ -1,106 +1,87 @@
 from __future__ import annotations
 
-from datetime import date
-from typing import Any, Literal
+import asyncio
+from typing import Literal
 
-from fastapi import APIRouter, Query
+import yfinance as yf
+from fastapi import APIRouter, HTTPException, Query
 
-from app.models.schemas import ExpirationsResponse, OptionChainResponse, OptionLeg, UnusualActivityLimitedResponse
-from app.services.cache import cache
-from app.services.massive import MassiveClient
+from app.models.schemas import ExpirationsResponse, OptionChainResponse
+from app.services import yahoo
 
 router = APIRouter(prefix="/api/options", tags=["options"])
-POPULAR_TICKERS = ["NVDA", "AAPL", "TSLA", "AMD", "MSFT", "AMZN", "META", "GOOGL", "SPY", "QQQ"]
+POPULAR_TICKERS = ["NVDA", "TSLA", "AAPL", "AMD", "AMZN", "META", "MSFT", "SPY", "QQQ", "GOOGL"]
 
 
-def parse_option(item: dict[str, Any], underlying_price: float | None = None) -> OptionLeg:
-    details = item.get("details") or item
-    quote = item.get("last_quote") or {}
-    trade = item.get("last_trade") or {}
-    greeks = item.get("greeks") or {}
-    day = item.get("day") or {}
-    underlying_price = underlying_price if underlying_price is not None else (item.get("underlying_asset") or {}).get("price")
-    strike = float(details.get("strike_price") or 0)
-    typ = details.get("contract_type") or "call"
-    itm = None
-    if underlying_price is not None:
-        itm = underlying_price > strike if typ == "call" else underlying_price < strike
-    return OptionLeg(
-        ticker=details.get("ticker", ""),
-        type=typ,
-        strike=strike,
-        expiration=details.get("expiration_date", ""),
-        bid=quote.get("bid"),
-        ask=quote.get("ask"),
-        midpoint=quote.get("midpoint"),
-        last_price=trade.get("price") or day.get("close"),
-        volume=day.get("volume"),
-        open_interest=item.get("open_interest"),
-        implied_volatility=item.get("implied_volatility"),
-        delta=greeks.get("delta"),
-        gamma=greeks.get("gamma"),
-        theta=greeks.get("theta"),
-        vega=greeks.get("vega"),
-        break_even_price=item.get("break_even_price"),
-        day_change=day.get("change"),
-        day_change_percent=day.get("change_percent"),
-        in_the_money=itm,
-        raw=item,
-    )
-
-
-@router.get("/{ticker}/expirations", response_model=ExpirationsResponse)
-async def expirations(ticker: str):
-    symbol = ticker.upper()
-    client = MassiveClient()
-    key = f"expirations:{symbol}"
-    data = await cache.get_or_set(
-        key,
-        300,
-        lambda: client.option_contracts(symbol, limit=250, extra_params={"expiration_date.gte": date.today().isoformat()}, max_pages=1),
-    )
-    exps = sorted({item.get("expiration_date") for item in data.get("results", []) if item.get("expiration_date")})
-    return ExpirationsResponse(ticker=symbol, expirations=exps)
-
-
-@router.get("/{ticker}/chain", response_model=OptionChainResponse)
-async def option_chain(ticker: str, expiration: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
-    symbol = ticker.upper()
-    client = MassiveClient()
-    data = await cache.get_or_set(
-        f"contracts:{symbol}:{expiration}",
-        300,
-        lambda: client.option_contracts(symbol, expiration_date=expiration, limit=250, max_pages=1),
-    )
-    prev_data = await cache.get_or_set(f"aggs_prev:{symbol}", 60, lambda: client.aggs_prev(symbol))
-    prev = (prev_data.get("results") or [{}])[0]
-    underlying_price = prev.get("c")
-
-    legs = [parse_option(item, underlying_price=underlying_price) for item in data.get("results", [])]
-    calls = sorted([l for l in legs if l.type == "call"], key=lambda l: l.strike)
-    puts = sorted([l for l in legs if l.type == "put"], key=lambda l: l.strike)
-    strikes = sorted({l.strike for l in legs})
-    grouped: dict[str, dict[str, OptionLeg | None]] = {str(s): {"call": None, "put": None} for s in strikes}
-    for leg in legs:
-        grouped[str(leg.strike)][leg.type] = leg
-    return OptionChainResponse(
-        calls=calls,
-        puts=puts,
-        underlying_price=underlying_price,
-        strikes=strikes,
-        grouped_by_strike=grouped,
-        data_limited=True,
-        upgrade_message="Live options quotes, IV, Greeks, volume, and open interest require the Options Starter plan. Upgrade at massive.com/pricing",
-    )
-
-
-@router.get("/unusual", response_model=UnusualActivityLimitedResponse)
+@router.get("/unusual")
 async def unusual_activity(
     type: Literal["all", "call", "put"] = "all",
     min_vol_oi: float = Query(1.0, ge=0),
 ):
-    return UnusualActivityLimitedResponse(
-        results=[],
-        data_limited=True,
-        message="Unusual activity requires Options Starter plan. Upgrade at massive.com/pricing",
-    )
+    def scan() -> dict:
+        results = []
+        for symbol in POPULAR_TICKERS:
+            try:
+                t = yf.Ticker(symbol)
+                exps = t.options[:2]
+                try:
+                    price = yahoo._safe_float(t.fast_info.last_price)
+                except Exception:
+                    price = None
+                for exp in exps:
+                    chain = t.option_chain(exp)
+                    for side, df in [("call", chain.calls), ("put", chain.puts)]:
+                        if type != "all" and type != side:
+                            continue
+                        for _, row in df.iterrows():
+                            vol = yahoo._safe_int(row.get("volume")) or 0
+                            oi = yahoo._safe_int(row.get("openInterest")) or 0
+                            if oi <= 0 or vol <= 0:
+                                continue
+                            ratio = vol / oi
+                            if ratio < min_vol_oi:
+                                continue
+                            lp = yahoo._safe_float(row.get("lastPrice")) or 0
+                            results.append(
+                                {
+                                    "ticker": symbol,
+                                    "contract_ticker": row.get("contractSymbol", ""),
+                                    "contract_type": side,
+                                    "type": side,
+                                    "strike": float(row["strike"]),
+                                    "expiration": exp,
+                                    "volume": vol,
+                                    "open_interest": oi,
+                                    "oi": oi,
+                                    "vol_oi_ratio": round(ratio, 2),
+                                    "vol_oi": round(ratio, 2),
+                                    "premium": round(lp * vol * 100, 2) if lp else None,
+                                    "last_price": lp,
+                                    "implied_volatility": yahoo._safe_float(row.get("impliedVolatility")),
+                                    "underlying_price": price,
+                                    "in_the_money": bool(row.get("inTheMoney", False)),
+                                }
+                            )
+            except Exception:
+                continue
+        results.sort(key=lambda r: (r["vol_oi_ratio"], r.get("premium") or 0), reverse=True)
+        return {"results": results[:50], "data_limited": False}
+
+    return await asyncio.to_thread(scan)
+
+
+@router.get("/{ticker}/expirations", response_model=ExpirationsResponse)
+async def expirations(ticker: str):
+    try:
+        exps = await asyncio.to_thread(yahoo.get_expirations, ticker)
+        return {"ticker": ticker.upper(), "expirations": exps}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/{ticker}/chain", response_model=OptionChainResponse)
+async def option_chain(ticker: str, expiration: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$")):
+    try:
+        return await asyncio.to_thread(yahoo.get_option_chain, ticker, expiration)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e

@@ -10,7 +10,6 @@ const fallback = [
   { id: "consumer-electronics", name: "消费电子" },
   { id: "energy", name: "能源" },
 ];
-const limitedMessage = "IV/Greeks 数据需要升级 Massive.com Options Starter 计划";
 
 export async function mountSectors(root, state) {
   let sectors;
@@ -37,16 +36,13 @@ export async function mountSectors(root, state) {
 
   const rows = rank.rankings || [];
   const heatRows = heat.data || heat.rankings || [];
-  const dataLimited = rank.data_limited || heat.data_limited;
-  const notice = dataLimited
-    ? limitedNotice(rank.message || heat.message || limitedMessage)
-    : loadError
-      ? limitedNotice(`板块 IV 数据加载失败：${loadError.message || "请求失败"}`)
-      : rows.length === 0
-        ? limitedNotice("暂无板块 IV 数据")
-        : "";
+  const notice = loadError
+    ? noticeHTML(`板块 IV 数据加载失败：${loadError.message || "请求失败"}`)
+    : rows.length === 0
+      ? noticeHTML("暂无板块 IV 数据")
+      : "";
 
-  root.innerHTML = `<div class="space-y-lg fade-in"><div class="flex gap-xs overflow-x-auto custom-scrollbar pb-xs">${sectors.map((s) => `<button data-sector="${s.id}" class="px-md py-sm shrink-0 rounded-xl font-label-sm ${state.sectorId === s.id ? "tab-active" : "bg-white hover:bg-surface-container-low text-on-surface-variant"}">${s.name}</button>`).join("")}</div><div class="grid grid-cols-12 gap-gutter"><section class="col-span-12 lg:col-span-9 card overflow-hidden"><div class="glass-header px-xl py-md border-b border-outline-variant/20 flex items-center gap-md"><span class="material-symbols-outlined text-primary">pie_chart</span><h1 class="font-headline-lg-mobile md:font-headline-lg">板块分析</h1></div>${notice || tableHTML(rows)}<div id="inlineChain" class="p-xl hidden"></div></section><aside class="col-span-12 lg:col-span-3 card p-lg"><h2 class="font-headline-md mb-lg">IV Heatmap</h2>${dataLimited || heatRows.length === 0 ? `<div class="rounded-xl border border-outline-variant/40 bg-surface-container-low p-lg text-center text-label-sm text-on-surface-variant">${limitedMessage}</div>` : heatmapHTML(heatRows)}</aside></div></div>`;
+  root.innerHTML = `<div class="space-y-lg fade-in"><div class="flex gap-xs overflow-x-auto custom-scrollbar pb-xs">${sectors.map((s) => `<button data-sector="${s.id}" class="px-md py-sm shrink-0 rounded-xl font-label-sm ${state.sectorId === s.id ? "tab-active" : "bg-white hover:bg-surface-container-low text-on-surface-variant"}">${s.name}</button>`).join("")}</div><div class="grid grid-cols-12 gap-gutter"><section class="col-span-12 lg:col-span-9 card overflow-hidden"><div class="glass-header px-xl py-md border-b border-outline-variant/20 flex items-center gap-md"><span class="material-symbols-outlined text-primary">pie_chart</span><h1 class="font-headline-lg-mobile md:font-headline-lg">板块分析</h1></div>${notice || tableHTML(rows)}<div id="inlineChain" class="p-xl hidden"></div></section><aside class="col-span-12 lg:col-span-3 card p-lg"><h2 class="font-headline-md mb-lg">IV Heatmap</h2>${heatRows.length === 0 ? `<div class="rounded-xl border border-outline-variant/40 bg-surface-container-low p-lg text-center text-label-sm text-on-surface-variant">暂无热力图数据</div>` : heatmapHTML(heatRows)}</aside></div></div>`;
 
   root.querySelectorAll("[data-sector]").forEach(
     (b) =>
@@ -78,8 +74,8 @@ export async function mountSectors(root, state) {
   );
 }
 
-function limitedNotice(message) {
-  return `<div class="p-xl text-center"><div class="rounded-xl border border-outline-variant/40 bg-surface-container-low p-xl"><span class="material-symbols-outlined text-primary text-4xl mb-sm">lock</span><p class="font-headline-md text-on-surface">${limitedMessage}</p><p class="text-label-sm text-on-surface-variant mt-sm">${message}</p></div></div>`;
+function noticeHTML(message) {
+  return `<div class="p-xl text-center"><div class="rounded-xl border border-outline-variant/40 bg-surface-container-low p-xl"><span class="material-symbols-outlined text-primary text-4xl mb-sm">info</span><p class="font-headline-md text-on-surface">${message}</p></div></div>`;
 }
 
 function tableHTML(rows) {

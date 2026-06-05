@@ -46,14 +46,17 @@ class ExpirationsResponse(BaseModel):
 
 
 class OptionLeg(BaseModel):
-    ticker: str
-    type: Literal["call", "put"]
-    strike: float
-    expiration: str
+    ticker: Optional[str] = None
+    type: Optional[Literal["call", "put"]] = None
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     bid: Optional[float] = None
     ask: Optional[float] = None
+    mid: Optional[float] = None
     midpoint: Optional[float] = None
     last_price: Optional[float] = None
+    change: Optional[float] = None
+    change_percent: Optional[float] = None
     volume: Optional[int] = None
     open_interest: Optional[int] = None
     implied_volatility: Optional[float] = None
@@ -61,6 +64,7 @@ class OptionLeg(BaseModel):
     gamma: Optional[float] = None
     theta: Optional[float] = None
     vega: Optional[float] = None
+    break_even: Optional[float] = None
     break_even_price: Optional[float] = None
     day_change: Optional[float] = None
     day_change_percent: Optional[float] = None
@@ -69,27 +73,34 @@ class OptionLeg(BaseModel):
 
 
 class OptionChainResponse(BaseModel):
-    calls: List[OptionLeg]
-    puts: List[OptionLeg]
+    ticker: Optional[str] = None
+    expiration: Optional[str] = None
+    calls: List[OptionLeg] = []
+    puts: List[OptionLeg] = []
     underlying_price: Optional[float] = None
-    strikes: List[float]
-    grouped_by_strike: Dict[str, Dict[str, Optional[OptionLeg]]]
-    data_limited: bool = False
+    strikes: List[float] = []
+    grouped_by_strike: Dict[str, Dict[str, Optional[OptionLeg]]] = {}
+    data_limited: Optional[bool] = None
     upgrade_message: Optional[str] = None
 
 
 class UnusualActivity(BaseModel):
-    ticker: str
-    contract_ticker: str
-    type: Literal["call", "put"]
-    strike: float
-    expiration: str
-    volume: int
-    oi: int
-    vol_oi: float
+    ticker: Optional[str] = None
+    contract_ticker: Optional[str] = None
+    contract_type: Optional[Literal["call", "put"]] = None
+    type: Optional[Literal["call", "put"]] = None
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
+    volume: Optional[int] = None
+    open_interest: Optional[int] = None
+    oi: Optional[int] = None
+    vol_oi_ratio: Optional[float] = None
+    vol_oi: Optional[float] = None
     premium: Optional[float] = None
+    last_price: Optional[float] = None
     implied_volatility: Optional[float] = None
     underlying_price: Optional[float] = None
+    in_the_money: Optional[bool] = None
 
 
 class Sector(BaseModel):
@@ -102,8 +113,10 @@ class SectorIVRank(BaseModel):
     ticker: str
     name: Optional[str] = None
     price: Optional[float] = None
-    iv_rank: int
+    iv_rank: Optional[float] = None
+    iv_percentile: Optional[float] = None
     iv_pct: Optional[float] = None
+    iv_current: Optional[float] = None
     iv_change_30d: Optional[float] = None
 
 
@@ -114,14 +127,17 @@ class SectorHeatmapItem(BaseModel):
 
 class UnusualActivityLimitedResponse(BaseModel):
     results: List[UnusualActivity] = []
-    data_limited: bool = True
-    message: str
+    data_limited: Optional[bool] = None
+    message: Optional[str] = None
 
 
 class SectorIVLimitedResponse(BaseModel):
     rankings: List[Union[SectorIVRank, SectorHeatmapItem]] = []
-    data_limited: bool = True
-    message: str
+    data: List[SectorHeatmapItem] = []
+    sector_id: Optional[str] = None
+    sector_name: Optional[str] = None
+    data_limited: Optional[bool] = None
+    message: Optional[str] = None
 
 
 class MarketStatus(BaseModel):

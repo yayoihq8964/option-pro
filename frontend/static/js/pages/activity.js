@@ -1,7 +1,6 @@
 import { api } from "../api.js";
 const fmt = (n, d = 2) =>
   Number(n || 0).toLocaleString("zh-CN", { maximumFractionDigits: d });
-const limitedMessage = "IV/Greeks 数据需要升级 Massive.com Options Starter 计划";
 
 export async function mountActivity(root, state) {
   state.activityType = state.activityType || "all";
@@ -20,13 +19,11 @@ export async function mountActivity(root, state) {
   const rows = data.results || [];
   const calls = rows.filter((r) => r.contract_type === "call" || r.type === "call").length,
     puts = rows.length - calls;
-  const notice = data.data_limited
-    ? limitedNotice(data.message || limitedMessage)
-    : error
-      ? limitedNotice(`期权异动加载失败：${error.message || "请求失败"}`)
-      : rows.length === 0
-        ? limitedNotice("暂无期权异动数据")
-        : "";
+  const notice = error
+    ? noticeHTML(`期权异动加载失败：${error.message || "请求失败"}`)
+    : rows.length === 0
+      ? noticeHTML("暂无期权异动数据")
+      : "";
 
   root.innerHTML = `<div class="grid grid-cols-12 gap-gutter fade-in"><div class="col-span-12 lg:col-span-9 space-y-lg"><section class="card overflow-hidden"><div class="glass-header px-xl py-md border-b border-outline-variant/20 flex flex-wrap gap-md items-center justify-between"><div class="flex items-center gap-md"><span class="material-symbols-outlined text-primary">analytics</span><h1 class="font-headline-lg-mobile md:font-headline-lg">期权异动</h1></div><div class="flex gap-xs">${[
     ["all", "全部"],
@@ -57,8 +54,8 @@ export async function mountActivity(root, state) {
   };
 }
 
-function limitedNotice(message) {
-  return `<div class="p-xl text-center"><div class="rounded-xl border border-outline-variant/40 bg-surface-container-low p-xl"><span class="material-symbols-outlined text-primary text-4xl mb-sm">lock</span><p class="font-headline-md text-on-surface">${limitedMessage}</p><p class="text-label-sm text-on-surface-variant mt-sm">${message}</p></div></div>`;
+function noticeHTML(message) {
+  return `<div class="p-xl text-center"><div class="rounded-xl border border-outline-variant/40 bg-surface-container-low p-xl"><span class="material-symbols-outlined text-primary text-4xl mb-sm">info</span><p class="font-headline-md text-on-surface">${message}</p></div></div>`;
 }
 
 function tableHTML(rows) {
