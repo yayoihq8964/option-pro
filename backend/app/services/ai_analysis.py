@@ -82,7 +82,7 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
     try:
         raw = _ask(prompt, use_web_search=True)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=1), result)
+        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result)
         return _sanitize_ai(result)
     except Exception as e:
         return {"analysis": f"AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}
@@ -210,7 +210,7 @@ def analyze_signals(ticker: str, signals: dict, scores: dict) -> dict:
         result.setdefault("data_quality", scores.get("data_quality"))
         result.setdefault("dip_buy_quality", scores.get("dip_buy_quality"))
         result.setdefault("options_flow_read", {"net_direction": "unknown", "confidence": 0, "bullish_flow_evidence": [], "bearish_flow_evidence": [], "unknown_or_neutral_flow": [], "warnings": ["未提供期权流结构化数据"]})
-        _cache[cache_key] = (datetime.utcnow() + timedelta(minutes=30), result)
+        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result)
         return _sanitize_ai(result)
     except Exception as e:
         return {
