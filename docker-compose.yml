@@ -8,7 +8,8 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
-      - MASSIVE_API_KEY=${MASSIVE_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini-2026-03-17}
+      - OPENAI_REASONING=${OPENAI_REASONING:-xhigh}
     ports:
       - "8000:8000"
     volumes:
