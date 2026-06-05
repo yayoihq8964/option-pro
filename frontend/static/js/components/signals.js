@@ -33,7 +33,11 @@ export function renderSignals(data) {
       <div class="flex justify-between items-end mb-4"><span class="text-[10px] font-bold text-white/70 uppercase tracking-[0.15em]">${biasLabel(data.overall)}</span><span class="text-3xl font-black font-headline">${score}%</span></div>
       <div class="h-2.5 bg-white/20 rounded-full overflow-hidden mb-4"><div class="h-full bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.6)] transition-all duration-500" style="width:${score}%"></div></div>
       <div class="space-y-3 text-sm flex-1">${rows.map(r => row(...r)).join('')}</div>
-      <div class="flex gap-2 mt-6 flex-wrap">${tags.map(t => `<span class="px-3 py-1.5 bg-white/20 border border-white/10 rounded-lg text-[10px] font-bold tracking-widest uppercase">${t}</span>`).join('')}</div>
+      <div class="flex gap-2 mt-6 flex-wrap">${tags.map(t => {
+        const labels = {MOMENTUM:'动量异常',TREND:'趋势偏离',VOLUME:'放量信号'};
+        const icons = {MOMENTUM:'speed',TREND:'trending_up',VOLUME:'bar_chart'};
+        return `<span class="px-3 py-1.5 bg-white/20 border border-white/10 rounded-lg text-[10px] font-bold tracking-wide flex items-center gap-1"><span class="material-symbols-outlined text-xs">${icons[t]||'info'}</span>${labels[t]||t}</span>`;
+      }).join('')}</div>
     </div>
   </div>`;
 }
