@@ -349,19 +349,20 @@ def _compute_sma(data, period):
 @router.get("/{ticker}/chart")
 async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|1h|5d|1m|3m|1y|all)$")):
     def _work():
-        # Config per timeframe: (period, interval, include_prepost)
+        # Config: (fetch_period, display_period, interval, prepost)
+        # fetch_period is longer to give EMA20/SMA50 enough warmup data
         config = {
-            "1h":  ("5d",  "1h",  True),    # 5 days hourly
-            "1d":  ("2d",  "5m",  True),    # 2 days 5-min
-            "5d":  ("5d",  "15m", False),   # 5 days 15-min
-            "1m":  ("1mo", "1d",  False),   # 1 month daily
-            "1y":  ("6mo", "1d",  False),   # 6 months daily
-            "all": ("2y",  "1wk", False),   # 2 years weekly
+            "1h":  ("10d", "5d",  "1h",  True),    # fetch 10d, show 5d
+            "1d":  ("2d",  "2d",  "5m",  True),    # intraday, no extra needed
+            "5d":  ("10d", "5d",  "15m", False),   # fetch 10d, show 5d
+            "1m":  ("6mo", "1mo", "1d",  False),   # fetch 6mo, show 1mo (SMA50 needs 50 bars)
+            "1y":  ("1y",  "6mo", "1d",  False),   # fetch 1y, show 6mo
+            "all": ("5y",  "2y",  "1wk", False),   # fetch 5y, show 2y
         }
-        period, interval, prepost = config.get(range, ("3mo", "1d", False))
+        fetch_period, display_period, interval, prepost = config.get(range, ("6mo", "3mo", "1d", False))
 
         tk = yf.Ticker(ticker.upper())
-        hist = tk.history(period=period, interval=interval, prepost=prepost)
+        hist = tk.history(period=fetch_period, interval=interval, prepost=prepost)
         if hist.empty:
             return {"bars": [], "ema20": [], "sma50": []}
 
@@ -392,6 +393,7 @@ async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|1h|5d|
         else:
             bars = raw_bars
 
+        # Compute EMA/SMA on FULL fetch window (more data = smoother lines)
         closes = [b["c"] for b in bars]
         times = [b["t"] for b in bars]
 
@@ -400,6 +402,25 @@ async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(1d|1h|5d|
 
         ema20_data = [{"time": times[i + len(closes) - len(ema20)], "value": round(v, 2)} for i, v in enumerate(ema20)]
         sma50_data = [{"time": times[i + len(closes) - len(sma50)], "value": round(v, 2)} for i, v in enumerate(sma50)]
+
+        # Trim bars to display window (but keep full EMA/SMA lines for context)
+        # Map display_period to approximate bar count based on interval
+        display_bars = {
+            # (display_period, interval) → max bars
+            "1h":  35,    # ~5 trading days × 7 hours
+            "1d":  999,   # show everything (2 days intraday)
+            "5d":  135,   # ~5 trading days × 27 bars (15-min)
+            "1m":  23,    # ~1 month of daily bars
+            "1y":  130,   # ~6 months of daily bars
+            "all": 105,   # ~2 years of weekly bars
+        }
+        max_display = display_bars.get(range, len(bars))
+        if len(bars) > max_display:
+            cutoff_time = bars[-max_display]["t"]
+            bars = bars[-max_display:]
+            # Also trim EMA/SMA to match display window
+            ema20_data = [p for p in ema20_data if p["time"] >= cutoff_time]
+            sma50_data = [p for p in sma50_data if p["time"] >= cutoff_time]
 
         return {"bars": bars, "ema20": ema20_data, "sma50": sma50_data}
 
