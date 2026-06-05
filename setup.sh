@@ -82,9 +82,10 @@ docker compose up -d
 echo ""
 echo -e "${GREEN}${BOLD}✓ Optix Pro 启动成功！${NC}"
 echo ""
-echo -e "  ${CYAN}${BOLD}打开浏览器访问: http://localhost:8000${NC}"
+PORT=${PORT:-2000}
+echo -e "  ${CYAN}${BOLD}打开浏览器访问: http://localhost:${PORT}${NC}"
 echo ""
-echo -e "  API 文档: http://localhost:8000/docs"
+echo -e "  API 文档: http://localhost:${PORT}/docs"
 echo ""
 echo -e "  ${BOLD}功能:${NC}"
 echo "    • 市场总览 — 51 只热门美股按板块分组"
