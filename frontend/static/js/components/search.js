@@ -1,31 +1,131 @@
 import { api } from '../api.js';
-import { openModal } from './modal.js';
 
-export function initSearch(root) {
-  if (!root) return;
-  root.innerHTML = `<div class="relative"><span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-lg">search</span><input id="stock-search" class="w-full bg-surface-container-low rounded-full py-2 pl-10 pr-4 text-sm outline-none focus:ring-2 focus:ring-primary/20" placeholder="搜索股票..."/><div id="search-results" class="hidden absolute top-11 left-0 right-0 bg-white rounded-2xl shadow-2xl border border-outline-variant/10 overflow-hidden z-[80]"></div></div>`;
-  const input = root.querySelector('#stock-search');
-  const box = root.querySelector('#search-results');
-  let timer;
-  input.addEventListener('input', () => {
-    clearTimeout(timer);
-    const q = input.value.trim();
-    if (q.length < 1) { box.classList.add('hidden'); return; }
-    timer = setTimeout(async () => {
-      try {
-        const res = await api.search(q);
-        const items = res.results || res.stocks || res || [];
-        box.innerHTML = items.slice(0, 8).map(x => `<button data-ticker="${x.ticker || x.symbol}" class="w-full text-left px-4 py-3 hover:bg-surface-container-low transition-colors"><span class="font-bold">${x.ticker || x.symbol}</span><span class="text-sm text-on-surface-variant ml-2">${x.name || ''}</span></button>`).join('') || '<div class="p-4 text-sm text-on-surface-variant">无结果</div>';
-        box.classList.remove('hidden');
-      } catch { box.innerHTML = '<div class="p-4 text-sm text-error">搜索失败</div>'; box.classList.remove('hidden'); }
-    }, 180);
+const ETHOS_SEARCH_INPUT_STYLE = 'background:#ffffff;border:1px solid #E8E4E1;border-radius:8px;box-shadow:inset 0 1px 2px rgba(0,0,0,0.06), inset 0 -1px 0 rgba(255,255,255,0.72);';
+const ETHOS_SEARCH_DROPDOWN_STYLE = 'background:#ffffff;border:1px solid #E8E4E1;border-radius:8px;box-shadow:0px 8px 24px rgba(0,0,0,0.08);';
+
+const FALLBACK_SYMBOLS = [
+  { ticker: 'AAPL', company: 'Apple Inc.', sector: 'TECH' },
+  { ticker: 'MSFT', company: 'Microsoft Corp.', sector: 'TECH' },
+  { ticker: 'NVDA', company: 'NVIDIA Corp.', sector: 'SEMIS' },
+  { ticker: 'TSLA', company: 'Tesla Inc.', sector: 'AUTO' },
+  { ticker: 'AMD', company: 'Advanced Micro Devices', sector: 'SEMIS' },
+  { ticker: 'META', company: 'Meta Platforms', sector: 'TECH' },
+  { ticker: 'AMZN', company: 'Amazon.com Inc.', sector: 'TECH' },
+  { ticker: 'GOOGL', company: 'Alphabet Inc.', sector: 'TECH' },
+  { ticker: 'JPM', company: 'JPMorgan Chase', sector: 'BANKS' },
+  { ticker: 'SPY', company: 'SPDR S&P 500 ETF', sector: 'ETF' },
+  { ticker: 'QQQ', company: 'Invesco QQQ Trust', sector: 'ETF' }
+];
+
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>'"]/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[character]);
+}
+
+function normalizeSearchItem(item = {}) {
+  const ticker = String(item.ticker ?? item.symbol ?? item.code ?? '').toUpperCase();
+  if (!ticker) return null;
+  return {
+    ticker,
+    company: item.company ?? item.companyName ?? item.company_name ?? item.name ?? '上市公司',
+    sector: String(item.sector ?? item.industry ?? item.assetClass ?? 'EQUITY').toUpperCase()
+  };
+}
+
+function uniqueByTicker(items) {
+  const map = new Map();
+  items.forEach((item) => {
+    const normalized = normalizeSearchItem(item);
+    if (normalized && !map.has(normalized.ticker)) map.set(normalized.ticker, normalized);
   });
-  box.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-ticker]');
-    if (!btn) return;
-    openModal(btn.dataset.ticker);
-    box.classList.add('hidden');
+  return [...map.values()];
+}
+
+async function loadSearchUniverse() {
+  try {
+    const payload = await api.watchlist();
+    const watchlist = Array.isArray(payload) ? payload : (payload?.watchlist ?? payload?.items ?? payload?.data ?? payload?.stocks ?? []);
+    const universe = uniqueByTicker([...watchlist, ...FALLBACK_SYMBOLS]);
+    return universe.length ? universe : FALLBACK_SYMBOLS;
+  } catch (error) {
+    console.warn('Search universe load failed; using fallback symbols.', error);
+    return FALLBACK_SYMBOLS;
+  }
+}
+
+function filterUniverse(universe, query) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  return universe
+    .filter((item) => item.ticker.toLowerCase().includes(needle) || item.company.toLowerCase().includes(needle) || item.sector.toLowerCase().includes(needle))
+    .slice(0, 8);
+}
+
+export function navigateSearchResult(ticker) {
+  const symbol = String(ticker || '').trim().toUpperCase();
+  if (!symbol) return;
+  window.location.hash = `#detail/${encodeURIComponent(symbol)}`;
+}
+
+export function bindSearchNavigation(root = document) {
+  root.querySelectorAll('[data-search-ticker]').forEach((result) => {
+    result.addEventListener('click', () => navigateSearchResult(result.dataset.searchTicker));
+  });
+}
+
+export function initSearch(root = document) {
+  const input = root.getElementById?.('global-search') ?? root.querySelector?.('#global-search');
+  const dropdown = root.getElementById?.('global-search-results') ?? root.querySelector?.('#global-search-results');
+  if (!input || !dropdown || input.dataset.searchBound === 'true') return;
+
+  input.dataset.searchBound = 'true';
+  input.setAttribute('style', ETHOS_SEARCH_INPUT_STYLE);
+  dropdown.setAttribute('style', ETHOS_SEARCH_DROPDOWN_STYLE);
+
+  let universePromise = loadSearchUniverse();
+
+  const closeDropdown = () => {
+    dropdown.hidden = true;
+    dropdown.innerHTML = '';
+    input.setAttribute('aria-expanded', 'false');
+  };
+
+  const renderResults = (results, query) => {
+    if (!query.trim()) return closeDropdown();
+    dropdown.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    if (!results.length) {
+      dropdown.innerHTML = `<button class="search-result-item" type="button" data-search-ticker="${escapeHtml(query)}" role="option"><span><strong class="mono font-data-mono" data-numeric>${escapeHtml(query.toUpperCase())}</strong><small>打开自定义代码</small></span><em>↵</em></button>`;
+    } else {
+      dropdown.innerHTML = results.map((item) => `
+        <button class="search-result-item" type="button" data-search-ticker="${escapeHtml(item.ticker)}" role="option">
+          <span><strong class="mono font-data-mono" data-numeric>${escapeHtml(item.ticker)}</strong><small>${escapeHtml(item.company)}</small></span>
+          <em class="label-caps">${escapeHtml(item.sector)}</em>
+        </button>
+      `).join('');
+    }
+    bindSearchNavigation(dropdown);
+  };
+
+  input.addEventListener('input', async () => {
+    const query = input.value;
+    const universe = await universePromise;
+    renderResults(filterUniverse(universe, query), query);
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeDropdown();
+    if (event.key === 'Enter' && input.value.trim()) navigateSearchResult(input.value.trim());
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('.sidebar-search')) closeDropdown();
+  });
+
+  window.addEventListener('hashchange', () => {
     input.value = '';
+    closeDropdown();
+    universePromise = loadSearchUniverse();
   });
-  document.addEventListener('click', (e) => { if (!root.contains(e.target)) box.classList.add('hidden'); });
 }

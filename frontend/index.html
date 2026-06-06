@@ -1,80 +1,117 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Option Pro · 股票期权分析</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              primary: '#6a1cf6',
-              'primary-container': '#ede0ff',
-              'on-primary': '#ffffff',
-              'on-primary-container': '#24005b',
-              secondary: '#4953ac',
-              'secondary-container': '#dfe0ff',
-              tertiary: '#006a28',
-              'tertiary-container': '#72fea0',
-              'on-tertiary-container': '#002108',
-              error: '#b41340',
-              'error-container': '#f74b6d',
-              'on-error': '#ffefef',
-              'on-error-container': '#510017',
-              surface: '#f5f6fb',
-              'surface-container-lowest': '#ffffff',
-              'surface-container-low': '#eff1f6',
-              'surface-container': '#e6e8ee',
-              'surface-container-high': '#e0e2e9',
-              'on-surface': '#2c2f33',
-              'on-surface-variant': '#595c60',
-              'outline-variant': '#abadb2',
-              'inverse-surface': '#0c0e12',
-            },
-            fontFamily: {
-              headline: ['Manrope', 'system-ui', 'sans-serif'],
-              body: ['Inter', 'system-ui', 'sans-serif'],
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-            },
-            borderRadius: { '2xl': '1rem', '3xl': '1.5rem' },
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Optix Pro · Ethos Financial</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#000000',
+            tertiary: '#059669',
+            error: '#ba1a1a',
+            surface: '#fbf9f8',
+            'surface-container-lowest': '#ffffff',
+            'surface-container-low': '#f5f3f2',
+            'surface-container': '#efedeb',
+            'surface-container-high': '#e9e8e7',
+            'surface-container-highest': '#e3e2e1',
+            surfaceContainerLowest: '#ffffff',
+            surfaceContainerLow: '#f5f3f2',
+            surfaceContainer: '#efedeb',
+            surfaceContainerHigh: '#e9e8e7',
+            surfaceContainerHighest: '#e3e2e1',
+            border: '#E8E4E1',
+            ink: '#171717',
+            muted: '#6f6a66',
+            panel: '#ffffff',
+            emerald: '#059669',
+            crimson: '#ba1a1a'
           },
-        },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
+          },
+          spacing: {
+            sidebar: '240px'
+          },
+          boxShadow: {
+            micro: '0px 4px 20px rgba(0,0,0,0.04)'
+          },
+          borderRadius: {
+            ethos: '8px'
+          }
+        }
       }
-    </script>
-    <link rel="stylesheet" href="/static/css/styles.css" />
-  </head>
-  <body>
-    <div id="app-shell" class="min-h-screen">
-      <header class="sticky top-0 z-50 glass-panel border-b border-white/60">
-        <div class="h-16 px-4 md:px-8 flex items-center gap-5">
-          <a href="#watchlist" class="flex items-center gap-3 shrink-0">
-            <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-primary to-secondary text-white flex items-center justify-center shadow-lg shadow-primary/20">
-              <span class="material-symbols-outlined">candlestick_chart</span>
-            </div>
-            <div>
-              <p class="font-headline font-extrabold leading-tight tracking-tight">Option Pro</p>
-              <p class="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Signals & Options</p>
-            </div>
-          </a>
-          <nav class="flex items-center gap-1 bg-surface-container-low rounded-full p-1 ml-auto md:ml-2">
-            <a data-nav="watchlist" href="#watchlist" class="nav-link px-4 py-2 rounded-full text-xs font-bold transition-all">自选</a>
-            <a data-nav="sectors" href="#sectors" class="nav-link px-4 py-2 rounded-full text-xs font-bold transition-all">板块</a>
-            <a data-nav="earnings" href="#earnings" class="nav-link px-4 py-2 rounded-full text-xs font-bold transition-all">财报</a>
-          </nav>
-          <div id="global-search" class="hidden md:block w-80"></div>
-        </div>
-      </header>
-      <div id="app" class="min-h-[calc(100vh-64px)]"></div>
+    };
+  </script>
+
+  <link rel="stylesheet" href="./static/css/styles.css" />
+</head>
+<body class="bg-surface text-primary font-sans antialiased">
+  <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="sidebar" aria-expanded="false" aria-label="Open navigation">
+    <span></span><span></span><span></span>
+  </button>
+  <div id="sidebar-backdrop" class="sidebar-backdrop" hidden></div>
+  <aside id="sidebar" class="app-sidebar fixed left-0 top-0 z-40 h-screen w-[240px] border-r border-border bg-surface px-4 py-6">
+    <a href="#watchlist" class="sidebar-logo" aria-label="Optix Pro 总览">
+      <span class="logo-mark">O</span>
+      <span class="logo-copy">
+        <strong>Optix Pro</strong>
+        <small>Ethos Terminal</small>
+      </span>
+    </a>
+
+    <div class="sidebar-search" role="search">
+      <label class="sr-only" for="global-search">搜索股票</label>
+      <input id="global-search" type="search" placeholder="搜索代码 / 公司" autocomplete="off" aria-autocomplete="list" aria-controls="global-search-results" aria-expanded="false" />
+      <div id="global-search-results" class="search-results-dropdown" role="listbox" hidden></div>
     </div>
-    <div id="modal-root"></div>
-    <script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
-    <script type="module" src="/static/js/app.js?v=20260605d"></script>
-  </body>
+
+    <nav class="sidebar-nav" aria-label="主导航">
+      <a class="sidebar-link" href="#watchlist" data-route="watchlist">
+        <span class="material-symbols-rounded" aria-hidden="true">dashboard</span>
+        <span class="sidebar-link-label">总览</span>
+        <kbd>#watchlist</kbd>
+      </a>
+      <a class="sidebar-link" href="#sectors" data-route="sectors">
+        <span class="material-symbols-rounded" aria-hidden="true">layers</span>
+        <span class="sidebar-link-label">板块</span>
+        <kbd>#sectors</kbd>
+      </a>
+      <a class="sidebar-link" href="#earnings" data-route="earnings">
+        <span class="material-symbols-rounded" aria-hidden="true">event_note</span>
+        <span class="sidebar-link-label">财报</span>
+        <kbd>#earnings</kbd>
+      </a>
+    </nav>
+  </aside>
+
+  <div class="app-shell ml-[240px] min-h-screen">
+    <section class="ticker-bar" aria-label="Global market indices">
+      <div class="ticker-track">
+        <span class="ticker-item"><strong>S&amp;P 500</strong><span class="mono font-data-mono" data-numeric>5,352.96</span><em class="up mono font-data-mono" data-numeric>+0.42%</em></span>
+        <span class="ticker-item"><strong>NASDAQ</strong><span class="mono font-data-mono" data-numeric>17,192.53</span><em class="up mono font-data-mono" data-numeric>+0.68%</em></span>
+        <span class="ticker-item"><strong>DOW JONES</strong><span class="mono font-data-mono" data-numeric>38,798.99</span><em class="down mono font-data-mono" data-numeric>-0.12%</em></span>
+        <span class="ticker-item"><strong>NIKKEI</strong><span class="mono font-data-mono" data-numeric>38,683.93</span><em class="up mono font-data-mono" data-numeric>+0.31%</em></span>
+        <span class="ticker-item"><strong>SSE</strong><span class="mono font-data-mono" data-numeric>3,048.79</span><em class="down mono font-data-mono" data-numeric>-0.21%</em></span>
+      </div>
+    </section>
+
+    <main id="app" class="main-content" tabindex="-1" aria-live="polite"></main>
+  </div>
+
+  <div id="modal-root"></div>
+
+  <script type="module" src="./static/js/app.js"></script>
+</body>
 </html>

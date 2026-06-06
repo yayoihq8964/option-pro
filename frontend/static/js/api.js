@@ -1,31 +1,161 @@
-const API_BASE = '';
+const API_BASE = '/api';
 
-async function request(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+async function fetchJson(url, init) {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+async function tryEndpoints(paths) {
+  let lastError;
+  for (const path of paths) {
+    try {
+      return await fetchJson(path);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('No API endpoint configured');
 }
 
 export const api = {
-  watchlist: () => request('/api/stocks/watchlist'),
-  stock: (ticker) => request(`/api/stocks/${encodeURIComponent(ticker)}`),
-  chart: (ticker, range = '1d') => request(`/api/stocks/${encodeURIComponent(ticker)}/chart?range=${encodeURIComponent(range)}`),
-  signals: (ticker) => request(`/api/signals/stock/${encodeURIComponent(ticker)}`),
-  topBottomSignals: (ticker) => request(`/api/signals/stock/${encodeURIComponent(ticker)}`),
-  marketTopBottomSignals: () => request('/api/signals/market'),
-  analyzeTopBottomSignals: (ticker) => request(`/api/signals/stock/${encodeURIComponent(ticker)}/ai-analysis`, {method:'POST'}),
-  expirations: (ticker) => request(`/api/options/${encodeURIComponent(ticker)}/expirations`),
-  optionChain: (ticker, expiration) => request(`/api/options/${encodeURIComponent(ticker)}/chain?expiration=${encodeURIComponent(expiration)}`),
-  sectors: () => request('/api/sectors'),
-  ivRanking: (id) => request(`/api/sectors/${encodeURIComponent(id)}/iv-ranking`),
-  heatmap: (id) => request(`/api/sectors/${encodeURIComponent(id)}/heatmap`),
-  earnings: () => request('/api/earnings/upcoming'),
-  analyzeAlerts: (data) => request('/api/ai/analyze-alerts', {method:'POST', body: JSON.stringify(data)}),
-  earningsCorrelation: () => request('/api/ai/earnings-correlation'),
-  marketStatus: () => request('/api/market/status'),
-  search: (q) => request(`/api/stocks/search?q=${encodeURIComponent(q)}`),
-};
+  watchlist() {
+    return tryEndpoints([
+      `${API_BASE}/watchlist`,
+      `${API_BASE}/market/watchlist`,
+      '/watchlist'
+    ]);
+  },
 
-export function safe(promise, fallback = null) {
-  return promise.catch((error) => ({ __error: error.message, fallback }));
-}
+  stock(ticker) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return tryEndpoints([
+      `${API_BASE}/stock/${symbol}`,
+      `${API_BASE}/stocks/${symbol}`,
+      `${API_BASE}/market/stock/${symbol}`,
+      `${API_BASE}/market/stocks/${symbol}`,
+      `${API_BASE}/quote/${symbol}`,
+      `${API_BASE}/market/quote/${symbol}`
+    ]);
+  },
+
+  chart(ticker, range = '1M') {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    const window = encodeURIComponent(range);
+    return tryEndpoints([
+      `${API_BASE}/chart/${symbol}?range=${window}`,
+      `${API_BASE}/stocks/${symbol}/chart?range=${window}`,
+      `${API_BASE}/market/chart/${symbol}?range=${window}`,
+      `${API_BASE}/market/stocks/${symbol}/chart?range=${window}`
+    ]);
+  },
+
+  signals(ticker) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return tryEndpoints([
+      `${API_BASE}/signals/${symbol}`,
+      `${API_BASE}/stocks/${symbol}/signals`,
+      `${API_BASE}/market/signals/${symbol}`,
+      `${API_BASE}/market/stocks/${symbol}/signals`
+    ]);
+  },
+
+  topBottomSignals(ticker) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return tryEndpoints([
+      `${API_BASE}/signals/${symbol}/top-bottom`,
+      `${API_BASE}/top-bottom-signals/${symbol}`,
+      `${API_BASE}/stocks/${symbol}/top-bottom-signals`,
+      `${API_BASE}/market/signals/${symbol}/top-bottom`,
+      `${API_BASE}/market/stocks/${symbol}/top-bottom-signals`
+    ]);
+  },
+
+  expirations(ticker) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return tryEndpoints([
+      `${API_BASE}/expirations/${symbol}`,
+      `${API_BASE}/stocks/${symbol}/expirations`,
+      `${API_BASE}/options/${symbol}/expirations`,
+      `${API_BASE}/market/expirations/${symbol}`,
+      `${API_BASE}/market/options/${symbol}/expirations`
+    ]);
+  },
+
+  optionChain(ticker, expiration) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    const expiry = encodeURIComponent(String(expiration || ''));
+    const suffix = expiry ? `?expiration=${expiry}` : '';
+    return tryEndpoints([
+      `${API_BASE}/option-chain/${symbol}${suffix}`,
+      `${API_BASE}/option_chain/${symbol}${suffix}`,
+      `${API_BASE}/options/${symbol}/chain${suffix}`,
+      `${API_BASE}/stocks/${symbol}/options${suffix}`,
+      `${API_BASE}/market/option-chain/${symbol}${suffix}`,
+      `${API_BASE}/market/option_chain/${symbol}${suffix}`,
+      `${API_BASE}/market/options/${symbol}/chain${suffix}`
+    ]);
+  },
+
+  analyzeAlerts(ticker, alerts = []) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return fetchJson(`${API_BASE}/ai/analyze-alerts/${symbol}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ alerts })
+    });
+  },
+
+  analyzeTopBottomSignals(ticker, signals = {}) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return fetchJson(`${API_BASE}/ai/analyze-top-bottom-signals/${symbol}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ signals })
+    });
+  },
+
+  sectors() {
+    return tryEndpoints([
+      `${API_BASE}/sectors`,
+      `${API_BASE}/market/sectors`,
+      '/sectors'
+    ]);
+  },
+
+  ivRanking() {
+    return tryEndpoints([
+      `${API_BASE}/iv-ranking`,
+      `${API_BASE}/iv_ranking`,
+      `${API_BASE}/market/iv-ranking`,
+      `${API_BASE}/market/iv_ranking`,
+      '/iv-ranking'
+    ]);
+  },
+
+  heatmap() {
+    return tryEndpoints([
+      `${API_BASE}/heatmap`,
+      `${API_BASE}/market/heatmap`,
+      '/heatmap'
+    ]);
+  },
+
+  earnings() {
+    return tryEndpoints([
+      `${API_BASE}/earnings`,
+      `${API_BASE}/market/earnings`,
+      '/earnings'
+    ]);
+  },
+
+  earningsCorrelation(ticker = 'Earnings') {
+    const symbol = encodeURIComponent(String(ticker || 'Earnings').toUpperCase());
+    return fetchJson(`${API_BASE}/ai/earnings-correlation/${symbol}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+};

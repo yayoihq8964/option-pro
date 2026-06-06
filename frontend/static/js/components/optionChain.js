@@ -1,122 +1,202 @@
-const money = (n) => n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toFixed(2);
-const int = (n) => n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toLocaleString();
-const pct = (n) => n == null || Number.isNaN(Number(n)) ? '—' : (Number(n) * 100).toFixed(1) + '%';
-const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+import { api } from '../api.js';
 
-const firstValid = (...values) => {
-  for (const v of values) { if (v != null && !Number.isNaN(Number(v)) && Number(v) !== 0) return Number(v); }
-  return null;
-};
-
-const optionVolume = (o = {}) => firstValid(o.volume, o.vol);
-const optionOI = (o = {}) => firstValid(o.open_interest, o.oi, o.openInterest);
-const optionIV = (o = {}) => firstValid(o.implied_volatility, o.iv);
-
-export function renderExpirationSelect(expirations = [], selected = '') {
-  return `<select id="expiration-select" class="bg-surface-container-lowest border border-outline-variant/20 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-primary/20">
-    ${expirations.map(e => `<option value="${e}" ${e === selected ? 'selected' : ''}>${e}</option>`).join('')}
-  </select>`;
+function escapeHtml(value = '') {
+  return String(value).replace(/[&<>'"]/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[character]);
 }
 
-/** Render unusual activity alerts above the chain */
-export function renderAlerts(alerts = []) {
-  if (!alerts.length) return '';
-  const meta = (a = {}) => {
-    const dir = a.inferred_direction || a.signal || 'unknown';
-    if (dir === 'bullish') return { icon: 'trending_up', bg: 'bg-tertiary-container/40', text: 'text-tertiary', chip: 'bg-tertiary/15 text-tertiary', label: '方向推断偏多' };
-    if (dir === 'bearish') return { icon: 'trending_down', bg: 'bg-error-container/40', text: 'text-error', chip: 'bg-error/15 text-error', label: '方向推断偏空' };
-    return { icon: 'help', bg: 'bg-surface-container-low', text: 'text-on-surface-variant', chip: 'bg-surface-container text-on-surface-variant', label: '方向未知' };
+function formatNumber(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  return number.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function formatVolume(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '—';
+  if (Math.abs(number) >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(number) >= 1_000) return `${(number / 1_000).toFixed(1)}K`;
+  return number.toLocaleString('en-US');
+}
+
+function normalizeExpirations(payload) {
+  const expirations = Array.isArray(payload) ? payload : (payload?.expirations ?? payload?.data ?? payload?.dates ?? []);
+  return expirations.map((item) => typeof item === 'string' ? item : (item.date ?? item.expiration ?? item.expiry)).filter(Boolean);
+}
+
+function normalizeLeg(raw = {}, type) {
+  return {
+    type,
+    bid: raw.bid ?? raw.b,
+    ask: raw.ask ?? raw.a,
+    last: raw.last ?? raw.lastPrice ?? raw.price,
+    volume: raw.volume ?? raw.vol,
+    openInterest: raw.openInterest ?? raw.open_interest ?? raw.oi,
+    impliedVolatility: raw.impliedVolatility ?? raw.iv ?? raw.implied_volatility,
+    delta: raw.delta,
+    unusual: Boolean(raw.unusual ?? raw.isUnusual ?? raw.unusual_activity),
+    alert: raw.alert ?? raw.alertType ?? raw.sentiment
   };
-  return `<div class="space-y-2 mb-5">
-    <div class="flex items-center justify-between gap-3 flex-wrap">
-      <h4 class="text-[10px] font-black uppercase tracking-widest text-on-surface-variant flex items-center gap-2">
-        <span class="material-symbols-outlined text-primary text-base">notifications_active</span>
-        异动信号
-      </h4>
-      <span class="text-[10px] font-bold text-on-surface-variant">方向推断，非确定性判断</span>
-    </div>
-    ${alerts.map(a => {
-      const m = meta(a);
-      const expText = a.expiration ? `${String(a.expiration).slice(5).replace('-', '/')}到期` : '到期日—';
-      return `<div class="flex items-center gap-3 p-3 rounded-xl ${m.bg}">
-        <span class="material-symbols-outlined text-lg ${m.text}">${m.icon}</span>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="font-bold text-sm">${a.type === 'call' ? 'CALL' : 'PUT'} ${money(a.strike)} · ${esc(expText)} · DTE ${a.dte ?? '—'}</span>
-            <span class="text-[10px] font-bold text-on-surface-variant">Vol ${int(a.volume)} · OI ${int(a.open_interest)}</span>
-            ${a.premium_flow ? `<span class="text-[10px] font-bold ${m.text}">$${Number(a.premium_flow).toLocaleString()}</span>` : ''}
-            <span class="px-2 py-0.5 rounded-md text-[10px] font-bold ${m.chip}">${m.label}</span>
-          </div>
-          <div class="flex gap-1.5 mt-1 flex-wrap">
-            ${(a.reasons || []).map(r => `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold ${m.chip}">${esc(r)}</span>`).join('')}
-          </div>
-        </div>
-      </div>`;
-    }).join('')}
-  </div>`;
 }
 
+function normalizeChain(payload) {
+  const source = payload?.data ?? payload?.chain ?? payload?.optionChain ?? payload ?? {};
+  const rows = [];
 
-export function renderOptionChain(chain) {
-  if (!chain || chain.__error) return `<div class="rounded-3xl bg-surface-container-low p-8 text-center text-sm text-on-surface-variant">期权链暂无数据</div>`;
-
-  const underlying = Number(chain.underlying_price || 0);
-  const groups = chain.grouped_by_strike || {};
-  let allStrikes = Object.keys(groups).map(Number).sort((a, b) => a - b);
-
-  // ── Filter to ATM ± 10 strikes ──
-  if (underlying > 0 && allStrikes.length > 20) {
-    const atmIdx = allStrikes.reduce((best, s, i) =>
-      Math.abs(s - underlying) < Math.abs(allStrikes[best] - underlying) ? i : best, 0);
-    const lo = Math.max(0, atmIdx - 10);
-    const hi = Math.min(allStrikes.length, atmIdx + 11);
-    allStrikes = allStrikes.slice(lo, hi);
+  const combined = source.rows ?? source.strikes ?? source.options;
+  if (Array.isArray(combined)) {
+    combined.forEach((row) => {
+      const strike = Number(row.strike ?? row.strikePrice ?? row.price);
+      if (Number.isFinite(strike)) {
+        rows.push({
+          strike,
+          call: normalizeLeg(row.call ?? row.calls ?? row, 'call'),
+          put: normalizeLeg(row.put ?? row.puts ?? row, 'put')
+        });
+      }
+    });
   }
 
-  const rows = allStrikes.map((strike) => {
-    const g = groups[strike] || groups[String(strike)] || groups[strike.toFixed(1)] || groups[strike + '.0'] || {};
-    const c = g.call || {};
-    const p = g.put || {};
-    const atm = underlying > 0 && Math.abs(strike - underlying) < Math.max(1, underlying * 0.008);
-    const cVol = optionVolume(c);
-    const pVol = optionVolume(p);
-    const cOI = optionOI(c);
-    const pOI = optionOI(p);
-    const cIV = optionIV(c);
-    const pIV = optionIV(p);
+  const calls = source.calls ?? payload?.calls;
+  const puts = source.puts ?? payload?.puts;
+  if (!rows.length && (Array.isArray(calls) || Array.isArray(puts))) {
+    const byStrike = new Map();
+    (calls || []).forEach((call) => {
+      const strike = Number(call.strike ?? call.strikePrice);
+      if (Number.isFinite(strike)) byStrike.set(strike, { ...(byStrike.get(strike) || {}), strike, call: normalizeLeg(call, 'call') });
+    });
+    (puts || []).forEach((put) => {
+      const strike = Number(put.strike ?? put.strikePrice);
+      if (Number.isFinite(strike)) byStrike.set(strike, { ...(byStrike.get(strike) || {}), strike, put: normalizeLeg(put, 'put') });
+    });
+    rows.push(...byStrike.values());
+  }
 
-    return `<tr class="${atm ? 'bg-primary/5 border-y border-primary/20' : ''} hover:bg-surface-container-low/60 transition-colors">
-      <td class="px-3 py-2.5 text-center text-xs tabular-nums">${cVol != null ? int(cVol) : '—'}</td>
-      <td class="px-3 py-2.5 text-center text-xs tabular-nums text-on-surface-variant">${cOI != null ? int(cOI) : '—'}</td>
-      <td class="px-3 py-2.5 text-center text-xs tabular-nums text-on-surface-variant">${cIV ? pct(cIV) : '—'}</td>
-      <td class="px-3 py-2.5 text-center"><span class="px-2.5 py-1 rounded-full ${atm ? 'bg-primary text-on-primary font-black' : 'bg-surface-container font-bold'} text-xs font-headline tabular-nums">${money(strike)}</span></td>
-      <td class="px-3 py-2.5 text-center text-xs tabular-nums text-on-surface-variant">${pIV ? pct(pIV) : '—'}</td>
-      <td class="px-3 py-2.5 text-center text-xs tabular-nums text-on-surface-variant">${pOI != null ? int(pOI) : '—'}</td>
-      <td class="px-3 py-2.5 text-center text-xs tabular-nums">${pVol != null ? int(pVol) : '—'}</td>
-    </tr>`;
-  }).join('');
+  const underlying = Number(source.underlyingPrice ?? source.underlying ?? source.spot ?? payload?.underlyingPrice);
+  const sorted = rows.filter((row) => Number.isFinite(row.strike)).sort((a, b) => a.strike - b.strike);
+  const atmStrike = Number(source.atmStrike ?? payload?.atmStrike) || sorted.reduce((closest, row) => {
+    if (!Number.isFinite(underlying)) return closest ?? row.strike;
+    if (closest == null) return row.strike;
+    return Math.abs(row.strike - underlying) < Math.abs(closest - underlying) ? row.strike : closest;
+  }, null);
+
+  return { rows: sorted, underlyingPrice: underlying, atmStrike };
+}
+
+function getAlertTone(leg = {}) {
+  const signal = String(leg.alert ?? '').toLowerCase();
+  if (leg.type === 'call' || signal.includes('bull') || signal.includes('call')) return 'bullish';
+  if (leg.type === 'put' || signal.includes('bear') || signal.includes('put')) return 'bearish';
+  return '';
+}
+
+function renderAlertChip(leg) {
+  if (!leg?.unusual && !leg?.alert) return '';
+  const tone = getAlertTone(leg);
+  const label = tone === 'bearish' ? 'Bearish Flow' : 'Bullish Flow';
+  return `<span class="option-alert-chip option-alert-chip--${tone}">${label}</span>`;
+}
+
+function renderLegCells(leg = {}) {
+  return `
+    <td class="mono font-data-mono" data-numeric>${formatNumber(leg.bid)}</td>
+    <td class="mono font-data-mono" data-numeric>${formatNumber(leg.ask)}</td>
+    <td class="mono font-data-mono" data-numeric>${formatNumber(leg.last)}</td>
+    <td class="mono font-data-mono" data-numeric>${formatVolume(leg.volume)}</td>
+    <td class="mono font-data-mono" data-numeric>${formatVolume(leg.openInterest)}</td>
+    <td class="mono font-data-mono option-iv" data-numeric>${formatNumber(Number(leg.impliedVolatility) > 3 ? leg.impliedVolatility : Number(leg.impliedVolatility) * 100, 1)}%</td>
+  `;
+}
+
+function renderTable(chain) {
+  if (!chain.rows.length) {
+    return '<div class="option-chain-empty">No option chain data available for this expiration.</div>';
+  }
 
   return `
-    ${renderAlerts(chain.alerts || [])}
-    <div class="overflow-x-auto custom-scrollbar rounded-3xl border border-outline-variant/10 bg-surface-container-lowest">
-      <table class="w-full text-sm">
-        <thead class="text-[10px] uppercase tracking-widest text-on-surface-variant bg-surface-container-low">
-          <tr>
-            <th class="px-3 py-2.5 text-center">成交量</th>
-            <th class="px-3 py-2.5 text-center">持仓量</th>
-            <th class="px-3 py-2.5 text-center">IV</th>
-            <th class="px-3 py-2.5 text-center font-black">行权价</th>
-            <th class="px-3 py-2.5 text-center">IV</th>
-            <th class="px-3 py-2.5 text-center">持仓量</th>
-            <th class="px-3 py-2.5 text-center">成交量</th>
+    <div class="option-chain-table-wrap">
+      <table class="option-chain-table">
+        <thead>
+          <tr class="option-chain-superhead">
+            <th colspan="7">Calls</th>
+            <th>Strike</th>
+            <th colspan="7">Puts</th>
           </tr>
-          <tr class="text-[9px] text-on-surface-variant/60">
-            <th class="px-3 pb-2 text-left" colspan="3">CALLS ←</th>
-            <th class="px-3 pb-2 text-center">STRIKE</th>
-            <th class="px-3 pb-2 text-right" colspan="3">→ PUTS</th>
+          <tr>
+            <th>Bid</th><th>Ask</th><th>Last</th><th>Vol</th><th>OI</th><th>IV</th><th>Alert</th>
+            <th>Strike</th>
+            <th>Alert</th><th>IV</th><th>OI</th><th>Vol</th><th>Last</th><th>Ask</th><th>Bid</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-outline-variant/5">${rows || '<tr><td colspan="7" class="p-8 text-center text-on-surface-variant">暂无期权链</td></tr>'}</tbody>
+        <tbody>
+          ${chain.rows.map((row) => {
+            const isAtm = Number(row.strike) === Number(chain.atmStrike);
+            return `
+              <tr class="${isAtm ? 'is-atm' : ''}">
+                ${renderLegCells(row.call)}
+                <td>${renderAlertChip(row.call)}</td>
+                <td class="option-strike mono font-data-mono" data-numeric>${formatNumber(row.strike)}</td>
+                <td>${renderAlertChip(row.put)}</td>
+                <td class="mono font-data-mono option-iv" data-numeric>${formatNumber(Number(row.put?.impliedVolatility) > 3 ? row.put?.impliedVolatility : Number(row.put?.impliedVolatility) * 100, 1)}%</td>
+                <td class="mono font-data-mono" data-numeric>${formatVolume(row.put?.openInterest)}</td>
+                <td class="mono font-data-mono" data-numeric>${formatVolume(row.put?.volume)}</td>
+                <td class="mono font-data-mono" data-numeric>${formatNumber(row.put?.last)}</td>
+                <td class="mono font-data-mono" data-numeric>${formatNumber(row.put?.ask)}</td>
+                <td class="mono font-data-mono" data-numeric>${formatNumber(row.put?.bid)}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
       </table>
-    </div>`;
+    </div>
+  `;
+}
+
+export async function mountOptionChain(container, ticker, initialExpirations = []) {
+  if (!container) return;
+  container.innerHTML = '<section class="option-chain-card panel"><span class="label-caps">Options Chain</span><div class="option-chain-empty">Loading option chain…</div></section>';
+
+  try {
+    let expirations = initialExpirations;
+    if (!expirations.length) expirations = normalizeExpirations(await api.expirations(ticker));
+    const selected = expirations[0] ?? '';
+
+    container.innerHTML = `
+      <section class="option-chain-card panel" aria-labelledby="option-chain-title">
+        <div class="option-chain-toolbar">
+          <div>
+            <span class="label-caps">Options Chain</span>
+            <h2 id="option-chain-title">${escapeHtml(ticker)} Calls | Strike | Puts</h2>
+          </div>
+          <label class="option-expiration-field label-caps">
+            Expiration
+            <select class="option-expiration-select" data-option-expiration>
+              ${expirations.map((date) => `<option value="${escapeHtml(date)}" ${date === selected ? 'selected' : ''}>${escapeHtml(date)}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <div data-option-chain-body class="option-chain-body"><div class="option-chain-empty">Loading ${escapeHtml(selected || 'latest')} chain…</div></div>
+      </section>
+    `;
+
+    const body = container.querySelector('[data-option-chain-body]');
+    const select = container.querySelector('[data-option-expiration]');
+    const loadChain = async (expiration) => {
+      body.innerHTML = '<div class="option-chain-empty">Loading option chain…</div>';
+      const chain = normalizeChain(await api.optionChain(ticker, expiration));
+      body.innerHTML = renderTable(chain);
+    };
+
+    select?.addEventListener('change', () => loadChain(select.value).catch((error) => {
+      console.warn('Option chain load failed', error);
+      body.innerHTML = `<div class="option-chain-empty">${escapeHtml(error.message ?? 'Unable to load option chain.')}</div>`;
+    }));
+
+    if (selected) await loadChain(selected);
+    else body.innerHTML = '<div class="option-chain-empty">No expiration dates available.</div>';
+  } catch (error) {
+    console.warn(`Failed to mount option chain for ${ticker}`, error);
+    container.innerHTML = `<section class="option-chain-card panel"><span class="label-caps">Options Chain</span><div class="option-chain-empty">${escapeHtml(error.message ?? 'Unable to load options.')}</div></section>`;
+  }
 }
