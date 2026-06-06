@@ -23,12 +23,13 @@ def _get_client() -> OpenAI:
 def _ask(prompt: str, use_web_search: bool = False) -> str:
     client = _get_client()
     tools = [{"type": "web_search_preview"}] if use_web_search else []
-    reasoning = os.environ.get("OPENAI_REASONING", "xhigh")
+    reasoning = os.environ.get("OPENAI_REASONING", "high")
     response = client.responses.create(
         model=os.environ.get("OPENAI_MODEL", "gpt-5.4-mini-2026-03-17"),
         input=prompt,
         tools=tools,
         reasoning={"effort": reasoning},
+        timeout=45,
     )
     for item in response.output:
         if item.type == "message":
