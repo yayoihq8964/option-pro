@@ -2,7 +2,7 @@
  * Candlestick chart using TradingView Lightweight Charts with EMA20 + SMA50 + Volume.
  * Reliable rendering — replaces custom SVG.
  */
-export function renderChart(container, data = {}) {
+export function renderChart(container, data = {}, visibleBars = 0) {
   container.innerHTML = '';
 
   const bars = normalizeBars(Array.isArray(data) ? data : data.bars || []);
@@ -85,7 +85,16 @@ export function renderChart(container, data = {}) {
     sma50Series.setData(sma50.map(p => ({ time: p.time, value: p.value })));
   }
 
-  chart.timeScale().fitContent();
+  // Show last N bars initially; user can scroll left for history
+  const totalBars = bars.length;
+  if (visibleBars > 0 && totalBars > visibleBars) {
+    chart.timeScale().setVisibleLogicalRange({
+      from: totalBars - visibleBars - 5,
+      to: totalBars + 5,
+    });
+  } else {
+    chart.timeScale().fitContent();
+  }
 
   // Responsive
   const resize = () => chart.applyOptions({

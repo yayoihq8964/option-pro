@@ -62,10 +62,11 @@ export function closeModal() {
 }
 
 async function mountModal(ticker) {
-  const ranges = ['1h','1d','5d','1m','1y'];
+  const ranges = ['5m','15m','1h','1d','1w'];
+  const rangeLabels = {'5m':'5分','15m':'15分','1h':'1时','1d':'日K','1w':'周K'};
   let currentRange = '1d';
   const tf = document.getElementById('tf-buttons');
-  const drawTf = () => tf.innerHTML = ranges.map(r => `<button data-range="${r}" class="px-4 py-1.5 rounded-full text-xs font-bold transition-all ${r===currentRange?'bg-primary text-on-primary shadow-sm':'text-on-surface-variant hover:bg-surface-container'}">${r.toUpperCase()}</button>`).join('');
+  const drawTf = () => tf.innerHTML = ranges.map(r => `<button data-range="${r}" class="px-4 py-1.5 rounded-full text-xs font-bold transition-all ${r===currentRange?'bg-primary text-on-primary shadow-sm':'text-on-surface-variant hover:bg-surface-container'}">${rangeLabels[r]||r}</button>`).join('');
   drawTf();
   tf.addEventListener('click', async e => { const b=e.target.closest('[data-range]'); if(!b) return; currentRange=b.dataset.range; drawTf(); await loadChart(ticker,currentRange); });
 
@@ -87,7 +88,7 @@ async function loadChart(ticker, range) {
   chartHandle?.destroy?.(); chartHandle = null;
   const data = await safe(api.chart(ticker, range));
   if (data.__error) { el.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-error">K线加载失败</div>'; return; }
-  chartHandle = renderChart(el, data);
+  chartHandle = renderChart(el, data, data.visible || 0);
 }
 
 async function loadOptionAlerts(ticker) {
