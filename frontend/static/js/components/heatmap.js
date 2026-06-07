@@ -98,10 +98,12 @@ export function renderHeatmap(payload = []) {
         const valueLabel = item.mode === 'iv'
           ? `IV ${Number(item.value).toFixed(0)}`
           : formatPercent(item.value);
+        // Hide duplicate label when label == ticker
+        const showLabel = item.label && String(item.label).toUpperCase() !== item.ticker;
         return `
           <button class="heatmap-tile" type="button" data-ticker="${escapeHtml(item.ticker)}" style="--tile-bg: ${color}; --tile-text: ${textColor};" aria-label="打开 ${escapeHtml(item.ticker)} 详情">
             <span class="heatmap-tile__ticker mono font-data-mono" data-numeric>${escapeHtml(item.ticker)}</span>
-            <span class="heatmap-tile__label">${escapeHtml(item.label)}</span>
+            ${showLabel ? `<span class="heatmap-tile__label">${escapeHtml(item.label)}</span>` : '<span></span>'}
             <strong class="heatmap-tile__change mono font-data-mono" data-numeric>${valueLabel}</strong>
           </button>
         `;
