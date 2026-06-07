@@ -1,154 +1,385 @@
+/**
+ * Earnings Calendar page — month grid with ticker chips, hover for details,
+ * click to load per-company AI impact analysis (which other stocks will move).
+ */
 import { api } from '../api.js';
-import { renderEarningsCorrelationAI } from '../components/aiAnalysis.js';
-
-// No fake fallback — show error state when API fails.
-const FALLBACK_EARNINGS = [];
 
 function escapeHtml(value = '') {
-  return String(value).replace(/[&<>'"]/g, (character) => ({
+  return String(value).replace(/[&<>'"]/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  })[character]);
+  })[c]);
 }
 
 function navigateToDetail(ticker) {
-  const symbol = String(ticker || '').trim().toUpperCase();
-  if (!symbol) return;
-  window.location.hash = `#detail/${encodeURIComponent(symbol)}`;
+  if (ticker) location.hash = `#detail/${ticker.toUpperCase()}`;
 }
 
-// US tickers default to USD; can extend with overrides later
-function inferCurrency(ticker, sector) {
-  // ADRs of HK/CN stocks still report in USD via NYSE/NASDAQ, so USD is safe default
-  return 'USD';
-}
-
-function quarterFromDate(dateStr) {
-  if (!dateStr || dateStr === 'TBD') return '—';
-  const m = String(dateStr).match(/(\d{4})-(\d{2})/);
-  if (!m) return '—';
-  const year = m[1];
-  const month = parseInt(m[2], 10);
-  const q = Math.ceil(month / 3);
-  return `Q${q} ${year}`;
-}
-
-function fmtLargeMoney(value, currency = 'USD') {
-  const n = Number(value);
+function fmtLargeMoney(v) {
+  const n = Number(v);
   if (!Number.isFinite(n) || n === 0) return '—';
-  const symbol = currency === 'USD' ? '$' : '';
   const abs = Math.abs(n);
-  let body;
-  if (abs >= 1e12) body = `${symbol}${(n / 1e12).toFixed(2)}T`;
-  else if (abs >= 1e9) body = `${symbol}${(n / 1e9).toFixed(2)}B`;
-  else if (abs >= 1e6) body = `${symbol}${(n / 1e6).toFixed(1)}M`;
-  else if (abs >= 1e3) body = `${symbol}${(n / 1e3).toFixed(1)}K`;
-  else body = `${symbol}${n.toFixed(2)}`;
-  return `${body} ${currency}`;
+  if (abs >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  return `$${n.toLocaleString()}`;
 }
-
-function fmtEps(value, currency = 'USD') {
-  const n = Number(value);
+function fmtEps(v) {
+  const n = Number(v);
   if (!Number.isFinite(n)) return '—';
-  const symbol = currency === 'USD' ? '$' : '';
-  return `${symbol}${n.toFixed(2)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 function normalizeEarnings(payload) {
-  const items = Array.isArray(payload) ? payload : (payload?.earnings ?? payload?.items ?? payload?.data ?? payload?.calendar ?? []);
-  return items.map((item) => {
-    const date = item.date ?? item.reportDate ?? item.report_date ?? item.earningsDate ?? item.earnings_date ?? 'TBD';
-    const ticker = String(item.ticker ?? item.symbol ?? '').toUpperCase();
-    const currency = inferCurrency(ticker, item.sector);
-    const explicitPeriod = item.period ?? item.quarter ?? item.fiscalQuarter ?? item.fiscal_quarter;
-    return {
-      ticker,
-      company: item.company ?? item.companyName ?? item.company_name ?? item.name ?? '上市公司',
-      date,
-      period: explicitPeriod || quarterFromDate(date),
-      epsEstimate: fmtEps(item.epsEstimate ?? item.eps_estimate ?? item.estimatedEps ?? item.estimated_eps, currency),
-      revenueEstimate: fmtLargeMoney(item.revenueEstimate ?? item.revenue_estimate ?? item.estimatedRevenue ?? item.estimated_revenue, currency)
-    };
-  }).filter((item) => item.ticker);
+  const items = Array.isArray(payload) ? payload : (payload?.earnings ?? []);
+  return items.map((it) => ({
+    ticker: String(it.ticker || '').toUpperCase(),
+    name: it.name || it.company || it.ticker || '',
+    date: it.earnings_date || it.date || '',
+    sector: it.sector || '',
+    epsEstimate: it.eps_estimate ?? null,
+    revenueEstimate: it.revenue_estimate ?? null,
+    marketCap: it.market_cap ?? null,
+  })).filter(it => it.ticker && it.date);
 }
 
-function renderEarningsRows(items) {
-  return items.map((item) => `
-    <tr>
-      <td><button class="earnings-ticker-badge mono font-data-mono" data-numeric type="button" data-ticker="${escapeHtml(item.ticker)}">${escapeHtml(item.ticker)}</button></td>
-      <td><strong>${escapeHtml(item.company)}</strong></td>
-      <td><span class="earnings-date-badge mono font-data-mono" data-numeric>${escapeHtml(item.date)}</span></td>
-      <td><span class="sector-tag label-caps">${escapeHtml(item.period)}</span></td>
-      <td class="mono font-data-mono" data-numeric>${escapeHtml(item.epsEstimate)}</td>
-      <td class="mono font-data-mono" data-numeric>${escapeHtml(item.revenueEstimate)}</td>
-    </tr>
-  `).join('');
+// ── Date math ──
+function parseISO(s) {
+  const [y, m, d] = String(s).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(Date.UTC(y, m - 1, d));
+}
+function ymKey(date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+function monthLabel(date) {
+  return `${date.getUTCFullYear()} 年 ${date.getUTCMonth() + 1} 月`;
+}
+function firstDayOfMonth(year, month) {
+  return new Date(Date.UTC(year, month, 1));
+}
+function daysInMonth(year, month) {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
 }
 
-function renderShell(isLoading = true) {
+// ── Calendar grid ──
+function buildCalendar(year, month, byDate) {
+  const first = firstDayOfMonth(year, month);
+  // We want Mon-first columns (0=Mon..6=Sun). getUTCDay: Sun=0..Sat=6
+  const firstWeekday = (first.getUTCDay() + 6) % 7;
+  const days = daysInMonth(year, month);
+  const cells = [];
+  // Leading blanks (previous month)
+  for (let i = 0; i < firstWeekday; i++) cells.push({ blank: true });
+  for (let d = 1; d <= days; d++) {
+    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    cells.push({ day: d, iso, items: byDate.get(iso) || [] });
+  }
+  // Trailing blanks to fill the last row
+  while (cells.length % 7 !== 0) cells.push({ blank: true });
+  return cells;
+}
+
+function colorForCount(n) {
+  if (n === 0) return 'transparent';
+  if (n <= 2) return 'rgba(5,150,105,0.08)';
+  if (n <= 5) return 'rgba(5,150,105,0.18)';
+  return 'rgba(5,150,105,0.32)';
+}
+
+function renderShell() {
   const app = document.getElementById('app');
   if (!app) return;
   app.innerHTML = `
     <section class="earnings-page" aria-labelledby="earnings-title">
       <header class="terminal-header">
         <div>
-          <span class="label-caps">财报</span>
-          <h1 id="earnings-title">财报中心</h1>
-          <p>沿用现有财报 API 数据流，使用 Ethos 表头、黑色代码徽章与安静的日期表面展示即将发布的业绩。</p>
+          <span class="label-caps">财报日历</span>
+          <h1 id="earnings-title">即将发布的财报</h1>
+          <p>按月份查看财报日历，鼠标悬停查看详情，点击代码分析联动公司。</p>
         </div>
+        <div id="earnings-month-nav" style="display:flex;align-items:center;gap:8px"></div>
       </header>
-      <section class="earnings-table-card" aria-labelledby="earnings-table-title">
-        <div class="section-card-heading"><span class="label-caps">日历</span><h2 id="earnings-table-title">即将发布</h2></div>
-        <div class="earnings-table-wrap">
-          <table class="earnings-table">
-            <thead>
-              <tr><th>代码</th><th>公司</th><th>财报日期</th><th>周期</th><th>EPS 预估</th><th>营收预估</th></tr>
-            </thead>
-            <tbody id="earnings-table-body">
-              ${isLoading ? '<tr><td colspan="6">正在加载财报日历…</td></tr>' : ''}
-            </tbody>
-          </table>
+
+      <section class="earnings-table-card" aria-labelledby="earnings-cal-title">
+        <div class="section-card-heading" style="display:flex;justify-content:space-between;align-items:center">
+          <div><span class="label-caps">日历</span><h2 id="earnings-cal-title" style="margin:0">财报月历</h2></div>
+          <div id="earnings-month-label" class="label-caps" style="font-weight:600"></div>
         </div>
+        <div id="earnings-cal" style="padding:16px"></div>
       </section>
-      <div id="earnings-ai-slot">${renderEarningsCorrelationAI('即将发布')}</div>
+
+      <section id="earnings-impact-panel" class="earnings-table-card" style="margin-top:16px;display:none">
+        <div class="section-card-heading"><span class="label-caps">AI 联动分析</span><h2 id="earnings-impact-title" style="margin:0">点击代码查看影响</h2></div>
+        <div id="earnings-impact-body" style="padding:20px"></div>
+      </section>
     </section>
+
+    <div id="earnings-tooltip" style="position:fixed;display:none;background:#fff;border:1px solid var(--color-border);border-radius:8px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,0.08);z-index:9999;max-width:280px;pointer-events:none;font-size:12px"></div>
   `;
 }
 
-function bindEarningsCorrelation() {
-  const button = document.querySelector('[data-earnings-correlation-button]');
-  const output = document.querySelector('[data-earnings-correlation-results]');
-  if (!button || !output) return;
-  button.addEventListener('click', async () => {
-    const original = button.textContent;
-    button.disabled = true;
-    button.textContent = '分析中…';
-    output.innerHTML = '<article class="ai-result-card ai-result-card--loading">正在读取财报背景…</article>';
-    try {
-      const result = await api.earningsCorrelation('Upcoming');
-      const source = result?.analysis ?? result?.data ?? result ?? {};
-      const summary = typeof source === 'string' ? source : (source.summary ?? source.text ?? source.analysis ?? '相关性分析完成。');
-      output.innerHTML = `<article class="ai-result-card"><div class="ai-result-card__header"><span class="label-caps">AI 分析</span><strong>即将发布财报相关性</strong></div><p>${escapeHtml(summary)}</p></article>`;
-    } catch (error) {
-      output.innerHTML = `<article class="ai-result-card"><span class="label-caps">AI 分析</span><p>${escapeHtml(error.message ?? '无法运行财报相关性分析。')}</p></article>`;
-    } finally {
-      button.disabled = false;
-      button.textContent = original;
-    }
+function renderMonthNav(months, currentIdx, onPick) {
+  const nav = document.getElementById('earnings-month-nav');
+  if (!nav) return;
+  nav.innerHTML = months.map((m, i) => `
+    <button type="button" data-month-idx="${i}"
+      class="ethos-timeframe-button ${i === currentIdx ? 'active' : ''}"
+      style="min-width:64px">${m.label.replace(/^\d+\s*年\s*/, '')}</button>
+  `).join('');
+  nav.querySelectorAll('[data-month-idx]').forEach(b => {
+    b.addEventListener('click', () => onPick(Number(b.dataset.monthIdx)));
   });
 }
 
+function renderCalendar(year, month, byDate) {
+  const cal = document.getElementById('earnings-cal');
+  const label = document.getElementById('earnings-month-label');
+  if (!cal || !label) return;
+  label.textContent = monthLabel(new Date(Date.UTC(year, month, 1)));
+
+  const cells = buildCalendar(year, month, byDate);
+  const weekHeader = ['一', '二', '三', '四', '五', '六', '日']
+    .map(w => `<div style="padding:8px 4px;text-align:center;font-size:11px;color:var(--color-muted);font-weight:600;letter-spacing:0.05em;text-transform:uppercase">周${w}</div>`)
+    .join('');
+
+  const cellsHtml = cells.map(c => {
+    if (c.blank) {
+      return `<div style="background:#fafaf8;min-height:96px;border-radius:6px"></div>`;
+    }
+    const bg = colorForCount(c.items.length);
+    const chips = c.items.slice(0, 4).map(it => `
+      <button type="button"
+        class="mono earnings-chip"
+        data-ticker="${escapeHtml(it.ticker)}"
+        data-iso="${escapeHtml(it.iso)}"
+        style="display:inline-block;background:#fff;border:1px solid var(--color-border);padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer;margin:1px 2px 1px 0">
+        ${escapeHtml(it.ticker)}
+      </button>
+    `).join('');
+    const more = c.items.length > 4
+      ? `<div style="font-size:10px;color:var(--color-muted);margin-top:2px">+${c.items.length - 4} 家</div>`
+      : '';
+    return `
+      <div data-day-iso="${c.iso}"
+        style="background:${bg};min-height:96px;border-radius:6px;padding:6px 8px;border:1px solid var(--color-border);display:flex;flex-direction:column">
+        <div style="font-size:12px;font-weight:700;color:var(--color-on-surface);margin-bottom:4px">${c.day}</div>
+        <div style="flex:1;display:flex;flex-wrap:wrap;align-content:flex-start">${chips}${more}</div>
+      </div>
+    `;
+  }).join('');
+
+  cal.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-bottom:4px">
+      ${weekHeader}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px">
+      ${cellsHtml}
+    </div>
+  `;
+}
+
+function bindHover(byTicker) {
+  const tip = document.getElementById('earnings-tooltip');
+  if (!tip) return;
+  const cal = document.getElementById('earnings-cal');
+  cal.addEventListener('mouseover', (e) => {
+    const btn = e.target.closest('.earnings-chip');
+    if (!btn) return;
+    const t = btn.dataset.ticker;
+    const item = byTicker.get(t);
+    if (!item) return;
+    tip.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:8px">
+        <strong class="mono" style="font-size:14px">${escapeHtml(t)}</strong>
+        <span style="color:var(--color-muted)">${escapeHtml(item.date)}</span>
+      </div>
+      <div style="font-weight:600;margin-bottom:6px;color:var(--color-on-surface)">${escapeHtml(item.name)}</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;color:var(--color-muted);font-size:11px">
+        <span>行业</span><span style="color:var(--color-on-surface)">${escapeHtml(item.sector || '—')}</span>
+        <span>EPS 预估</span><span class="mono" style="color:var(--color-on-surface)">${fmtEps(item.epsEstimate)}</span>
+        <span>营收预估</span><span class="mono" style="color:var(--color-on-surface)">${fmtLargeMoney(item.revenueEstimate)}</span>
+        <span>市值</span><span class="mono" style="color:var(--color-on-surface)">${fmtLargeMoney(item.marketCap)}</span>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--color-border);font-size:11px;color:var(--color-emerald);font-weight:600">点击查看 AI 联动分析 →</div>
+    `;
+    tip.style.display = 'block';
+  });
+  cal.addEventListener('mousemove', (e) => {
+    if (tip.style.display === 'none') return;
+    const pad = 14;
+    const rect = tip.getBoundingClientRect();
+    let x = e.clientX + pad;
+    let y = e.clientY + pad;
+    if (x + rect.width > window.innerWidth - 8) x = e.clientX - rect.width - pad;
+    if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  });
+  cal.addEventListener('mouseout', (e) => {
+    if (!e.target.closest('.earnings-chip')) return;
+    tip.style.display = 'none';
+  });
+}
+
+function relationLabel(rel) {
+  return {
+    competitor: '同行竞争',
+    supplier: '上游供应',
+    customer: '下游客户',
+    etf: '生态联动',
+    opposing: '对手交易',
+  }[rel] || rel || '关联';
+}
+
+function directionBadge(dir) {
+  if (dir === 'bullish') return `<span style="color:var(--color-emerald);font-weight:700">↑ 利好</span>`;
+  if (dir === 'bearish') return `<span style="color:var(--color-crimson);font-weight:700">↓ 利空</span>`;
+  return `<span style="color:var(--color-muted);font-weight:700">~ 中性</span>`;
+}
+
+function renderImpactCard(ticker, item, result) {
+  const summary = escapeHtml(result.summary || '');
+  const expectation = result.expectation ? `<div style="margin-top:6px;color:var(--color-muted);font-size:12px">${escapeHtml(result.expectation)}</div>` : '';
+  const impacted = Array.isArray(result.impacted) ? result.impacted : [];
+
+  const groups = impacted.reduce((acc, x) => {
+    const r = x.relation || 'other';
+    if (!acc[r]) acc[r] = [];
+    acc[r].push(x);
+    return acc;
+  }, {});
+
+  const groupsHtml = Object.keys(groups).map(rel => `
+    <div style="margin-bottom:14px">
+      <div class="label-caps" style="font-size:11px;color:var(--color-muted);margin-bottom:6px">${escapeHtml(relationLabel(rel))}</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${groups[rel].map(x => `
+          <div style="display:flex;gap:10px;align-items:start;padding:8px 10px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px">
+            <button type="button" data-ticker="${escapeHtml(x.ticker)}"
+              class="mono"
+              style="background:#000;color:#fff;border:0;padding:3px 7px;border-radius:4px;font-weight:700;font-size:12px;cursor:pointer;flex-shrink:0;min-width:54px;text-align:center">
+              ${escapeHtml(x.ticker)}
+            </button>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:2px">
+                <strong style="font-size:13px">${escapeHtml(x.name || x.ticker)}</strong>
+                ${directionBadge(x.direction)}
+              </div>
+              <div style="font-size:12px;color:var(--color-muted);line-height:1.5">${escapeHtml(x.reason || '')}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px;gap:16px">
+      <div>
+        <div style="display:flex;gap:10px;align-items:baseline;margin-bottom:4px">
+          <span class="mono" style="font-size:18px;font-weight:800">${escapeHtml(ticker)}</span>
+          <span style="font-size:14px;color:var(--color-on-surface)">${escapeHtml(item?.name || '')}</span>
+        </div>
+        <p style="margin:0;font-size:13px;color:var(--color-on-surface);line-height:1.55">${summary}</p>
+        ${expectation}
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div class="label-caps" style="font-size:11px;color:var(--color-muted)">财报日期</div>
+        <div class="mono" style="font-weight:700">${escapeHtml(item?.date || '—')}</div>
+      </div>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--color-border);margin:14px 0">
+    <div class="label-caps" style="font-size:11px;color:var(--color-muted);margin-bottom:10px">受影响的相关公司 (${impacted.length})</div>
+    ${groupsHtml || '<div style="color:var(--color-muted);font-size:12px">AI 未识别到显著联动公司</div>'}
+  `;
+}
+
+let __impactLoadToken = 0;
+async function loadImpact(ticker, byTicker) {
+  const panel = document.getElementById('earnings-impact-panel');
+  const title = document.getElementById('earnings-impact-title');
+  const body = document.getElementById('earnings-impact-body');
+  if (!panel || !body) return;
+  const myToken = ++__impactLoadToken;
+  panel.style.display = 'block';
+  title.textContent = `${ticker} · AI 联动分析`;
+  body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--color-muted)"><div style="width:24px;height:24px;border:2px solid #000;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 12px"></div>AI 分析联动公司中…（约 10-20 秒）</div>`;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  try {
+    const result = await api.earningsImpact(ticker);
+    if (myToken !== __impactLoadToken) return;
+    body.innerHTML = renderImpactCard(ticker, byTicker.get(ticker), result);
+    body.querySelectorAll('[data-ticker]').forEach(b => {
+      b.addEventListener('click', () => navigateToDetail(b.dataset.ticker));
+    });
+  } catch (e) {
+    if (myToken !== __impactLoadToken) return;
+    body.innerHTML = `<div style="padding:24px;text-align:center;color:var(--color-crimson)">AI 分析失败: ${escapeHtml(e.message || '未知错误')}</div>`;
+  }
+}
+
 export async function renderEarnings() {
-  renderShell(true);
-  const tableBody = document.getElementById('earnings-table-body');
+  renderShell();
+  const cal = document.getElementById('earnings-cal');
+  cal.innerHTML = '<div style="padding:48px;text-align:center;color:var(--color-muted)">加载财报日历中…</div>';
+
+  let earnings;
   try {
     const payload = await api.earnings();
-    const earnings = normalizeEarnings(payload);
-    if (!earnings.length) throw new Error('财报 API 未返回数据');
-    tableBody.innerHTML = renderEarningsRows(earnings);
-  } catch (error) {
-    console.warn('api.earnings() failed.', error);
-    tableBody.innerHTML = `<tr><td colspan="6" style="padding:48px;text-align:center;color:var(--color-muted)"><strong style="display:block;margin-bottom:6px;color:var(--color-crimson)">数据暂不可用</strong>财报 API 请求失败 · 请稍后刷新</td></tr>`;
+    earnings = normalizeEarnings(payload);
+    if (!earnings.length) throw new Error('no earnings');
+  } catch (e) {
+    cal.innerHTML = `<div style="padding:48px;text-align:center;color:var(--color-muted)"><strong style="display:block;margin-bottom:6px;color:var(--color-crimson)">数据暂不可用</strong>财报 API 请求失败 · 请稍后刷新</div>`;
+    return;
   }
-  document.querySelectorAll('[data-ticker]').forEach((button) => button.addEventListener('click', () => navigateToDetail(button.dataset.ticker)));
-  bindEarningsCorrelation();
+
+  // Group by date & ticker
+  const byDate = new Map();
+  const byTicker = new Map();
+  earnings.forEach(e => {
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+    byTicker.set(e.ticker, e);
+  });
+
+  // Find distinct months in data
+  const monthSet = new Map();
+  earnings.forEach(e => {
+    const d = parseISO(e.date);
+    if (!d) return;
+    const key = ymKey(d);
+    if (!monthSet.has(key)) {
+      monthSet.set(key, { year: d.getUTCFullYear(), month: d.getUTCMonth(), label: monthLabel(d) });
+    }
+  });
+  const months = Array.from(monthSet.values()).sort((a, b) =>
+    (a.year - b.year) * 100 + (a.month - b.month)
+  );
+
+  // Pick initial month: closest to today
+  const today = new Date();
+  const todayKey = ymKey(today);
+  let currentIdx = months.findIndex(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === todayKey);
+  if (currentIdx < 0) {
+    // pick first month >= today
+    currentIdx = months.findIndex(m => (m.year * 100 + m.month) >= (today.getFullYear() * 100 + today.getMonth()));
+    if (currentIdx < 0) currentIdx = 0;
+  }
+
+  const pick = (idx) => {
+    currentIdx = idx;
+    renderMonthNav(months, currentIdx, pick);
+    renderCalendar(months[idx].year, months[idx].month, byDate);
+    // Re-bind click after re-render
+    cal.querySelectorAll('.earnings-chip').forEach(btn => {
+      btn.addEventListener('click', () => loadImpact(btn.dataset.ticker, byTicker));
+    });
+  };
+
+  renderMonthNav(months, currentIdx, pick);
+  renderCalendar(months[currentIdx].year, months[currentIdx].month, byDate);
+  cal.querySelectorAll('.earnings-chip').forEach(btn => {
+    btn.addEventListener('click', () => loadImpact(btn.dataset.ticker, byTicker));
+  });
+  bindHover(byTicker);
 }

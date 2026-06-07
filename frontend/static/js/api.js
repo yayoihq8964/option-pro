@@ -83,6 +83,11 @@ export const api = {
   earningsCorrelation() {
     return fetchJson(`${API_BASE}/ai/earnings-correlation`);
   },
+
+  earningsImpact(ticker) {
+    return cached(`earn-impact:${ticker}`, T.STATIC, () =>
+      fetchJson(`${API_BASE}/ai/earnings-impact/${encodeURIComponent(ticker)}`));
+  },
 };
 
 export function safe(p) {

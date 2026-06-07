@@ -277,3 +277,89 @@ def analyze_earnings_correlation(earnings: list[dict], fingerprint: str = "") ->
         return _sanitize_ai(result)
     except Exception as e:
         return {"summary": f"AI分析暂时不可用", "correlations": [], "error": str(e)[:120]}
+
+
+def analyze_single_earnings_impact(earning: dict, fingerprint: str = "") -> dict:
+    """Per-company earnings impact analysis: which other companies will this report move?"""
+    ticker = (earning.get("ticker") or "").upper()
+    if not ticker:
+        return {"summary": "缺少代码", "impacted": []}
+
+    cache_key = f"earnings_impact:{ticker}"
+    cached = _cache.get(cache_key)
+    if cached and cached[0] > datetime.utcnow():
+        if not fingerprint or cached[2] == fingerprint:
+            return {**cached[1], "_cached": True}
+
+    name = earning.get("name") or ticker
+    sector = earning.get("sector") or "未知"
+    date = earning.get("earnings_date") or "近期"
+    eps_est = earning.get("eps_estimate")
+    rev_est = earning.get("revenue_estimate")
+    mcap = earning.get("market_cap")
+
+    facts = [
+        f"代码: {ticker}",
+        f"公司: {name}",
+        f"行业: {sector}",
+        f"财报日期: {date}",
+    ]
+    if eps_est is not None:
+        facts.append(f"EPS 预估: {eps_est}")
+    if rev_est:
+        try:
+            facts.append(f"营收预估: ${float(rev_est)/1e9:.2f}B")
+        except Exception:
+            pass
+    if mcap:
+        try:
+            facts.append(f"市值: ${float(mcap)/1e9:.1f}B")
+        except Exception:
+            pass
+
+    prompt = f"""你是资深美股分析师。{ticker}（{name}）即将发布财报。请用专业、克制的语气分析这份财报会**联动哪些其他上市公司**。
+
+公司信息:
+{chr(10).join(facts)}
+
+任务: 列出 4-8 家会被这份财报显著影响的相关公司（不包括 {ticker} 自己），覆盖以下类别（不必全有）:
+1. **同行竞争对手** — 直接竞争，业绩对比效应
+2. **上游供应商** — 这家公司是它们的大客户
+3. **下游客户** — 这家公司是它们的核心供应商
+4. **生态/ETF 联动** — 同主题 ETF 重仓股、同板块龙头
+5. **对手交易** — 一方走强可能让另一方走弱（如 PDD vs 阿里、波音 vs 空客）
+
+请用中文回复，严格使用以下 JSON 格式，仅返回 JSON:
+{{
+  "ticker": "{ticker}",
+  "summary": "这份财报的核心看点 + 整体联动逻辑，60 字以内",
+  "expectation": "市场预期方向，30 字以内（如：市场预期 EPS 同比改善、营收增速放缓等）",
+  "impacted": [
+    {{"ticker":"代码","name":"公司名","relation":"competitor|supplier|customer|etf|opposing","direction":"bullish|bearish|mixed","reason":"30 字以内传导逻辑"}}
+  ]
+}}
+
+要求:
+- impacted 至少 4 家、最多 8 家
+- relation 必须是上述 5 个枚举值之一
+- direction 表示「如果 {ticker} 业绩 beat」对该公司股价的影响方向
+- reason 写清传导路径（如「AMD 数据中心 GPU 直接对标 NVDA H100，beat 利好对手」）
+"""
+
+    try:
+        raw = _ask(prompt, use_web_search=False)
+        result = _parse_json(raw)
+        # Validate / normalize
+        if not isinstance(result.get("impacted"), list):
+            result["impacted"] = []
+        result["ticker"] = ticker
+        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
+        return _sanitize_ai(result)
+    except Exception as e:
+        return {
+            "ticker": ticker,
+            "summary": "AI 分析暂时不可用",
+            "expectation": "",
+            "impacted": [],
+            "error": str(e)[:120],
+        }

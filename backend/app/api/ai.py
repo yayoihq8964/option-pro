@@ -46,3 +46,25 @@ async def earnings_correlation(request: Request):
         return _sanitize(result)
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@router.get("/earnings-impact/{ticker}")
+async def earnings_impact(ticker: str, request: Request):
+    """Per-company earnings impact: which other companies will this report move?"""
+    try:
+        fp = _fingerprint(request)
+        # Find the company's earnings info
+        from app.api.earnings import upcoming_earnings
+        data = await upcoming_earnings()
+        earnings = data.get("earnings", []) if isinstance(data, dict) else []
+        target = next((e for e in earnings if e.get("ticker", "").upper() == ticker.upper()), None)
+        if not target:
+            # Use bare ticker — AI can still reason about generic company
+            target = {"ticker": ticker.upper(), "name": ticker.upper(),
+                      "sector": "", "earnings_date": "", "eps_estimate": None}
+        result = await asyncio.to_thread(
+            ai_analysis.analyze_single_earnings_impact, target, fp
+        )
+        return _sanitize(result)
+    except Exception as e:
+        raise HTTPException(500, str(e))
