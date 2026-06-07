@@ -1,117 +1,157 @@
-import { api } from '../api.js';
+import { api, safe } from '../api.js';
 
-function escapeHtml(value = '') {
-  return String(value).replace(/[&<>'"]/g, (character) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  })[character]);
+/**
+ * Render AI alert analysis button + panel inside option chain area.
+ * Only triggers on user click (saves tokens).
+ */
+export function renderAlertAnalysisButton(container, ticker, alerts, underlyingPrice, expiration) {
+  if (!alerts || alerts.length === 0) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-5';
+  wrap.innerHTML = `
+    <button id="ai-analyze-btn" class="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl
+      bg-gradient-to-r from-[#6a1cf6] to-[#4953ac] text-white font-bold text-sm
+      hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] transition-all">
+      <span class="material-symbols-outlined text-lg">psychology</span>
+      AI 分析异动 (${alerts.length} 条信号)
+    </button>
+    <div id="ai-analysis-result" class="hidden mt-4"></div>`;
+
+  container.prepend(wrap);
+
+  const btn = wrap.querySelector('#ai-analyze-btn');
+  const resultDiv = wrap.querySelector('#ai-analysis-result');
+
+  btn.onclick = async () => {
+    btn.innerHTML = '<span class="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin"></span> 正在分析...';
+    btn.disabled = true;
+
+    const result = await safe(api.analyzeAlerts({
+      ticker, alerts, underlying_price: underlyingPrice, expiration
+    }));
+
+    resultDiv.classList.remove('hidden');
+    resultDiv.innerHTML = renderAnalysisCard(result);
+
+    btn.innerHTML = `<span class="material-symbols-outlined text-lg">psychology</span> 重新分析`;
+    btn.disabled = false;
+  };
 }
 
-function normalizeAnalysis(payload) {
-  const source = payload?.analysis ?? payload?.data ?? payload ?? {};
-  const summary = typeof source === 'string' ? source : (source.summary ?? source.text ?? source.analysis ?? 'No AI analysis returned.');
-  const points = source.keyPoints ?? source.key_points ?? source.points ?? source.insights ?? [];
-  const confidence = source.confidence ?? source.score ?? source.rating;
-  return { summary, points: Array.isArray(points) ? points : [], confidence };
-}
-
-function renderResultCard(title, payload) {
-  const analysis = normalizeAnalysis(payload);
-  return `
-    <article class="ai-result-card">
-      <div class="ai-result-card__header">
-        <span class="label-caps">AI Analysis</span>
-        <strong>${escapeHtml(title)}</strong>
-      </div>
-      <p>${escapeHtml(analysis.summary)}</p>
-      ${analysis.points.length ? `
-        <ul>
-          ${analysis.points.slice(0, 4).map((point) => `<li>${escapeHtml(typeof point === 'string' ? point : (point.text ?? point.title ?? JSON.stringify(point)))}</li>`).join('')}
-        </ul>
-      ` : ''}
-      ${analysis.confidence != null ? `<span class="ai-confidence mono font-data-mono" data-numeric>Confidence ${escapeHtml(analysis.confidence)}</span>` : ''}
-    </article>
-  `;
-}
-
-async function runAnalysis(button, output, request, title) {
-  if (!button || !output) return;
-  const original = button.textContent;
-  button.disabled = true;
-  button.textContent = 'Analyzing…';
-  output.innerHTML = '<div class="ai-result-card ai-result-card--loading">Reading market context…</div>';
-  try {
-    const result = await request();
-    output.innerHTML = renderResultCard(title, result);
-  } catch (error) {
-    console.warn(`${title} failed`, error);
-    output.innerHTML = `<article class="ai-result-card"><span class="label-caps">AI Analysis</span><p>${escapeHtml(error.message ?? 'Unable to run AI analysis.')}</p></article>`;
-  } finally {
-    button.disabled = false;
-    button.textContent = original;
+function renderAnalysisCard(data) {
+  if (data?.__error || data?.error) {
+    return `<div class="rounded-2xl p-5 bg-surface-container-low text-center text-sm text-on-surface-variant">AI 分析暂时不可用</div>`;
   }
-}
 
-export function mountAlertsAnalysis(container, ticker, alerts = []) {
-  if (!container) return;
-  container.innerHTML = `
-    <section class="ai-analysis-panel panel" aria-labelledby="alerts-ai-title">
-      <div class="ai-analysis-copy">
-        <span class="label-caps">Unusual Activity AI</span>
-        <h3 id="alerts-ai-title">Interpret alert flow</h3>
-        <p>Summarize unusual options activity with neutral, Ethos-style market context.</p>
-      </div>
-      <button class="ai-analysis-button" type="button" data-ai-alerts>Analyze Alerts</button>
-      <div class="ai-analysis-results" data-ai-alert-results></div>
-    </section>
-  `;
-  const button = container.querySelector('[data-ai-alerts]');
-  const output = container.querySelector('[data-ai-alert-results]');
-  button?.addEventListener('click', () => runAnalysis(
-    button,
-    output,
-    () => api.analyzeAlerts(ticker, alerts),
-    `${ticker} unusual activity`
-  ));
-}
+  const conf = data?.confidence || 'medium';
+  const dir = data?.direction || 'mixed';
+  const confColors = { high: 'bg-tertiary text-white', medium: 'bg-amber-500 text-white', low: 'bg-error text-white' };
+  const dirColors = { bullish: 'bg-tertiary/20 text-tertiary', bearish: 'bg-error/20 text-error', mixed: 'bg-surface-container text-on-surface-variant' };
+  const dirLabels = { bullish: '看涨', bearish: '看空', mixed: '多空交织' };
 
-export function mountTopBottomAnalysis(container, ticker, signals = {}) {
-  if (!container) return;
-  container.innerHTML = `
-    <section class="ai-analysis-panel panel ai-analysis-panel--compact" aria-labelledby="signals-ai-title">
-      <div class="ai-analysis-copy">
-        <span class="label-caps">Signal AI</span>
-        <h3 id="signals-ai-title">Top / bottom read</h3>
-        <p>Translate signal gauges into a concise investment-risk narrative.</p>
-      </div>
-      <button class="ai-analysis-button" type="button" data-ai-signals>Analyze Signals</button>
-      <div class="ai-analysis-results" data-ai-signal-results></div>
-    </section>
-  `;
-  const button = container.querySelector('[data-ai-signals]');
-  const output = container.querySelector('[data-ai-signal-results]');
-  button?.addEventListener('click', () => runAnalysis(
-    button,
-    output,
-    () => api.analyzeTopBottomSignals(ticker, signals),
-    `${ticker} signal correlation`
-  ));
-}
-
-export function renderEarningsCorrelationAI(ticker = 'Earnings') {
   return `
-    <section class="ai-analysis-panel earnings-correlation-ai panel">
-      <div class="ai-analysis-copy">
-        <span class="label-caps">财报相关 AI</span>
-        <h3>${escapeHtml(ticker)} 财报背景</h3>
-        <p>使用 Ethos 白色表面、细边框与黑色主按钮呈现财报与期权流相关性。</p>
+    <div class="rounded-[2rem] p-6 bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] text-white shadow-xl relative overflow-hidden">
+      <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+      <div class="relative z-10 space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-md">
+            <span class="material-symbols-outlined">psychology</span>
+          </div>
+          <h3 class="font-headline font-extrabold text-lg">AI 异动分析</h3>
+          ${data?._cached ? '<span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">缓存</span>' : ''}
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${confColors[conf] || confColors.medium}">
+            置信度: ${conf.toUpperCase()}
+          </span>
+          <span class="px-3 py-1 rounded-full text-[10px] font-black ${dirColors[dir] || dirColors.mixed}">
+            ${dirLabels[dir] || dir}
+          </span>
+        </div>
+        ${data?.summary ? `<p class="text-white font-bold">${data.summary}</p>` : ''}
+        ${data?.analysis ? `<p class="text-sm text-white/85 leading-relaxed">${data.analysis}</p>` : ''}
+        ${data?.key_strikes?.length ? `
+          <div class="flex gap-2 flex-wrap">
+            ${data.key_strikes.map(s => `<span class="px-3 py-1.5 bg-white/20 rounded-lg text-[10px] font-bold tracking-widest">STRIKE ${s}</span>`).join('')}
+          </div>` : ''}
+        ${data?.risk_note ? `<p class="text-[10px] text-white/50 mt-2">⚠ ${data.risk_note}</p>` : ''}
       </div>
-      <button class="ai-analysis-button" type="button" data-earnings-correlation-button>分析相关性</button>
-      <div class="ai-analysis-results" data-earnings-correlation-results>
-        <article class="ai-result-card">
-          <span class="label-caps">就绪</span>
-          <p>运行分析以比较财报时间、期权流与信号方向。</p>
-        </article>
-      </div>
-    </section>
-  `;
+    </div>`;
+}
+
+/**
+ * Render earnings correlation analysis on the earnings page.
+ */
+export function renderEarningsCorrelation(container) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mb-8';
+  wrap.innerHTML = `
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-extrabold font-headline">AI 财报关联分析</h2>
+      <button id="ai-earnings-btn" class="flex items-center gap-2 px-4 py-2 rounded-xl
+        bg-gradient-to-r from-[#6a1cf6] to-[#4953ac] text-white font-bold text-xs
+        hover:shadow-lg active:scale-[0.98] transition-all">
+        <span class="material-symbols-outlined text-sm">auto_awesome</span>
+        生成分析
+      </button>
+    </div>
+    <div id="ai-earnings-result"></div>`;
+
+  container.prepend(wrap);
+
+  const btn = wrap.querySelector('#ai-earnings-btn');
+  const resultDiv = wrap.querySelector('#ai-earnings-result');
+
+  btn.onclick = async () => {
+    btn.innerHTML = '<span class="w-3 h-3 border-2 border-white/60 border-t-transparent rounded-full animate-spin"></span> GPT-5.4-mini 联网分析中...';
+    btn.disabled = true;
+
+    const result = await safe(api.earningsCorrelation());
+    resultDiv.innerHTML = renderCorrelationCards(result);
+
+    btn.innerHTML = `<span class="material-symbols-outlined text-sm">auto_awesome</span> 重新分析`;
+    btn.disabled = false;
+  };
+}
+
+function renderCorrelationCards(data) {
+  if (data?.__error || data?.error) {
+    return `<div class="rounded-2xl p-5 bg-surface-container-low text-center text-sm text-on-surface-variant">AI 分析暂时不可用: ${data?.error || ''}</div>`;
+  }
+
+  const correlations = data?.correlations || [];
+  const summary = data?.summary || '';
+  const theme = data?.market_theme || '';
+
+  return `
+    ${summary ? `
+    <div class="rounded-2xl p-5 bg-gradient-to-br from-[#6a1cf6]/10 to-[#4953ac]/5 border border-primary/10 mb-4">
+      <p class="text-sm font-medium text-on-surface leading-relaxed">${summary}</p>
+      ${theme ? `<p class="text-xs text-primary font-bold mt-2">📡 ${theme}</p>` : ''}
+      ${data?._cached ? '<p class="text-[10px] text-on-surface-variant mt-1">📋 今日已缓存分析</p>' : ''}
+    </div>` : ''}
+    <div class="space-y-3">
+      ${correlations.map(c => `
+        <div class="bg-surface-container-lowest rounded-2xl p-5 border border-outline-variant/10">
+          <div class="flex items-center gap-3 mb-3">
+            <span class="px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-black">${c.source_ticker}</span>
+            <span class="font-bold text-sm">${c.source_name || ''}</span>
+            <span class="text-xs text-on-surface-variant ml-auto">${c.earnings_date || ''}</span>
+          </div>
+          <div class="space-y-2">
+            ${(c.impact || []).map(imp => `
+              <div class="flex items-center gap-3 px-3 py-2 rounded-xl ${imp.direction === 'bullish' ? 'bg-tertiary-container/30' : 'bg-error-container/30'}">
+                <span class="material-symbols-outlined text-sm ${imp.direction === 'bullish' ? 'text-tertiary' : 'text-error'}">
+                  ${imp.direction === 'bullish' ? 'trending_up' : 'trending_down'}
+                </span>
+                <span class="font-bold text-xs">${imp.ticker}</span>
+                <span class="text-xs text-on-surface-variant">${imp.name || ''}</span>
+                <span class="text-xs text-on-surface-variant ml-auto">${imp.reason || ''}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
 }
