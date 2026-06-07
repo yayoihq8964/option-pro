@@ -1,5 +1,26 @@
 const API_BASE = '/api';
 
+// ───────── Cache ─────────
+// In-memory cache per API call. Cleared only when page reloads.
+const cache = new Map();      // key → { data, ts }
+const inflight = new Map();   // key → Promise (dedup concurrent requests)
+
+function cached(key, ttl, fn) {
+  const now = Date.now();
+  const entry = cache.get(key);
+  if (entry && now - entry.ts < ttl) return Promise.resolve(entry.data);
+  if (inflight.has(key)) return inflight.get(key);
+  const p = fn()
+    .then(data => { cache.set(key, { data, ts: Date.now() }); inflight.delete(key); return data; })
+    .catch(err => { inflight.delete(key); throw err; });
+  inflight.set(key, p);
+  return p;
+}
+
+export function invalidateCache(prefix = '') {
+  for (const k of cache.keys()) if (k.startsWith(prefix)) cache.delete(k);
+}
+
 async function fetchJson(url, init) {
   const response = await fetch(url, init);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
@@ -8,21 +29,37 @@ async function fetchJson(url, init) {
 
 function enc(ticker) { return encodeURIComponent(String(ticker).toUpperCase()); }
 
+// TTL constants (ms)
+const T = {
+  PRICES:  60 * 1000,        // 1 min — live-ish
+  CHART:   60 * 1000,        // 1 min
+  SIGNALS: 5  * 60 * 1000,   // 5 min — daily data
+  SLOW:    10 * 60 * 1000,   // 10 min — expensive endpoints
+  STATIC:  60 * 60 * 1000,   // 1 hour — rarely changes
+  OPTION:  30 * 1000,        // 30 s — for chain updates
+};
+
 export const api = {
-  watchlist()           { return fetchJson(`${API_BASE}/stocks/watchlist`); },
-  stock(ticker)         { return fetchJson(`${API_BASE}/stocks/${enc(ticker)}`); },
-  chart(ticker, range = '1d') { return fetchJson(`${API_BASE}/stocks/${enc(ticker)}/chart?range=${encodeURIComponent(range)}`); },
+  // Live-ish data — short cache
+  watchlist()           { return cached('wl', T.PRICES, () => fetchJson(`${API_BASE}/stocks/watchlist`)); },
+  stock(ticker)         { return cached(`s:${enc(ticker)}`, T.PRICES, () => fetchJson(`${API_BASE}/stocks/${enc(ticker)}`)); },
+  chart(ticker, range = '1d') { return cached(`c:${enc(ticker)}:${range}`, T.CHART, () => fetchJson(`${API_BASE}/stocks/${enc(ticker)}/chart?range=${encodeURIComponent(range)}`)); },
   search(q)             { return fetchJson(`${API_BASE}/stocks/search?q=${encodeURIComponent(q)}`); },
 
-  signals(ticker)       { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}`); },
-  topBottomSignals(ticker) { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}`); },
+  // Signals — daily aggregation
+  signals(ticker)       { return cached(`sig:${enc(ticker)}`, T.SIGNALS, () => fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}`)); },
+  topBottomSignals(ticker) { return cached(`tb:${enc(ticker)}`, T.SIGNALS, () => fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}`)); },
   signalAI(ticker)      { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}/ai-analysis`, { method:'POST', headers:{'Content-Type':'application/json'} }); },
   analyzeTopBottomSignals(ticker) { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}/ai-analysis`, { method:'POST', headers:{'Content-Type':'application/json'} }); },
 
-  expirations(ticker)   { return fetchJson(`${API_BASE}/options/${enc(ticker)}/expirations`); },
-  optionChain(ticker, exp) { const q = exp ? `?expiration=${encodeURIComponent(exp)}` : ''; return fetchJson(`${API_BASE}/options/${enc(ticker)}/chain${q}`); },
+  // Options — cache, but short
+  expirations(ticker)   { return cached(`exp:${enc(ticker)}`, T.SIGNALS, () => fetchJson(`${API_BASE}/options/${enc(ticker)}/expirations`)); },
+  optionChain(ticker, exp) {
+    const q = exp ? `?expiration=${encodeURIComponent(exp)}` : '';
+    return cached(`oc:${enc(ticker)}:${exp || ''}`, T.OPTION, () => fetchJson(`${API_BASE}/options/${enc(ticker)}/chain${q}`));
+  },
 
-  // Accept either (ticker, alerts, extra) OR ({ticker, alerts, underlying_price, expiration})
+  // AI — never cached (user explicitly requests)
   analyzeAlerts(arg1, alerts = [], extra = {}) {
     const body = (typeof arg1 === 'object' && arg1 !== null && !Array.isArray(arg1))
       ? arg1
@@ -34,12 +71,14 @@ export const api = {
     });
   },
 
-  sectors()             { return fetchJson(`${API_BASE}/sectors`); },
-  sectorIV(sectorId)    { return fetchJson(`${API_BASE}/sectors/${encodeURIComponent(sectorId)}/iv-ranking`); },
-  sectorHeatmap(sectorId) { return fetchJson(`${API_BASE}/sectors/${encodeURIComponent(sectorId)}/heatmap`); },
+  // Sectors — slow endpoints, longer cache
+  sectors()             { return cached('sectors', T.STATIC, () => fetchJson(`${API_BASE}/sectors`)); },
+  sectorIV(sectorId)    { return cached(`siv:${sectorId}`, T.SLOW, () => fetchJson(`${API_BASE}/sectors/${encodeURIComponent(sectorId)}/iv-ranking`)); },
+  sectorHeatmap(sectorId) { return cached(`shm:${sectorId}`, T.SLOW, () => fetchJson(`${API_BASE}/sectors/${encodeURIComponent(sectorId)}/heatmap`)); },
 
-  marketStatus()        { return fetchJson(`${API_BASE}/market/status`); },
-  earnings()            { return fetchJson(`${API_BASE}/earnings/upcoming`); },
+  // Status
+  marketStatus()        { return cached('mkt', T.PRICES, () => fetchJson(`${API_BASE}/market/status`)); },
+  earnings()            { return cached('earn', T.STATIC, () => fetchJson(`${API_BASE}/earnings/upcoming`)); },
 
   earningsCorrelation() {
     return fetchJson(`${API_BASE}/ai/earnings-correlation`);

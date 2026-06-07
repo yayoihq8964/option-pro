@@ -118,24 +118,89 @@ function renderShell() {
           <div class="section-card-heading"><span class="label-caps">IV 排名</span><h2 id="iv-ranking-title">波动率领先标的</h2></div>
           <div id="iv-ranking-list" class="iv-ranking-list"><div class="detail-muted">正在加载 IV 排名…</div></div>
         </section>
-        <section class="sector-section-card" aria-labelledby="heatmap-title">
-          <div class="section-card-heading"><span class="label-caps">热力图</span><h2 id="heatmap-title">市场宽度</h2></div>
-          <div id="sector-heatmap"><div class="detail-muted">正在加载热力图…</div></div>
-        </section>
+        <div class="sectors-right-column">
+          <section class="sector-section-card" aria-labelledby="heatmap-title">
+            <div class="section-card-heading"><span class="label-caps">热力图</span><h2 id="heatmap-title">市场宽度</h2></div>
+            <div id="sector-heatmap"><div class="detail-muted">正在加载热力图…</div></div>
+          </section>
+          <section class="sector-section-card" aria-labelledby="constituents-title">
+            <div class="section-card-heading"><span class="label-caps">成分股表现</span><h2 id="constituents-title">板块龙头</h2></div>
+            <div id="sector-constituents" class="sector-constituents"><div class="detail-muted">正在加载成分股…</div></div>
+          </section>
+          <section class="sector-section-card" aria-labelledby="stats-title">
+            <div class="section-card-heading"><span class="label-caps">板块统计</span><h2 id="stats-title">总览</h2></div>
+            <div id="sector-stats" class="sector-stats"></div>
+          </section>
+        </div>
       </div>
     </section>
   `;
 }
 
-async function loadSectorDetail(sectorId, sectorName) {
+function renderConstituents(stocks) {
+  if (!stocks.length) return '<div class="detail-muted">该板块成分股暂无数据</div>';
+  const sorted = [...stocks].sort((a, b) => (Number(b.change_percent || 0)) - (Number(a.change_percent || 0)));
+  return `<div class="constituents-grid">
+    ${sorted.map(s => {
+      const pct = Number(s.change_percent || 0);
+      const tone = pct >= 0 ? 'up' : 'down';
+      return `<button type="button" class="constituent-card" data-ticker="${s.ticker}">
+        <div class="constituent-top">
+          <strong class="mono">${s.ticker}</strong>
+          <span class="mono ${tone}" data-numeric>${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>
+        </div>
+        <div class="constituent-name">${s.name_cn || s.name || ''}</div>
+        <div class="mono constituent-price">$${Number(s.price || 0).toFixed(2)}</div>
+      </button>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderSectorStats(sectorName, ivItems, stocks) {
+  const totalStocks = stocks.length;
+  const advancing = stocks.filter(s => Number(s.change_percent || 0) > 0).length;
+  const declining = stocks.filter(s => Number(s.change_percent || 0) < 0).length;
+  const avgChange = totalStocks ? stocks.reduce((sum, s) => sum + Number(s.change_percent || 0), 0) / totalStocks : 0;
+  const avgIv = ivItems.length ? ivItems.reduce((sum, it) => sum + (Number(it.ivRank) || 0), 0) / ivItems.length : 0;
+  const maxGainer = [...stocks].sort((a, b) => (Number(b.change_percent || 0)) - (Number(a.change_percent || 0)))[0];
+  const maxLoser  = [...stocks].sort((a, b) => (Number(a.change_percent || 0)) - (Number(b.change_percent || 0)))[0];
+
+  const stat = (label, value, tone = '') => `<div class="sector-stat">
+    <span class="label-caps">${label}</span>
+    <strong class="mono ${tone}" data-numeric>${value}</strong>
+  </div>`;
+
+  const fmtPct = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+
+  return `<div class="sector-stats-grid">
+    ${stat('成分股数', totalStocks)}
+    ${stat('上涨 / 下跌', `${advancing} / ${declining}`)}
+    ${stat('平均涨幅', fmtPct(avgChange), avgChange >= 0 ? 'up' : 'down')}
+    ${stat('平均 IV', avgIv.toFixed(1))}
+    ${maxGainer ? stat('最强', `${maxGainer.ticker} ${fmtPct(Number(maxGainer.change_percent || 0))}`, 'up') : ''}
+    ${maxLoser ? stat('最弱', `${maxLoser.ticker} ${fmtPct(Number(maxLoser.change_percent || 0))}`, 'down') : ''}
+  </div>`;
+}
+
+async function loadSectorDetail(sectorId, sectorName, watchlistGroups = []) {
   const ivList = document.getElementById('iv-ranking-list');
   const heatmap = document.getElementById('sector-heatmap');
+  const constituents = document.getElementById('sector-constituents');
+  const stats = document.getElementById('sector-stats');
   const ivTitle = document.getElementById('iv-ranking-title');
   const heatmapTitle = document.getElementById('heatmap-title');
+  const constituentsTitle = document.getElementById('constituents-title');
   if (ivTitle) ivTitle.textContent = `${sectorName} · IV 排名`;
   if (heatmapTitle) heatmapTitle.textContent = `${sectorName} · 波动率热力图`;
+  if (constituentsTitle) constituentsTitle.textContent = `${sectorName} · 成分股`;
   if (ivList) ivList.innerHTML = '<div class="detail-muted">正在加载 IV 排名…</div>';
   if (heatmap) heatmap.innerHTML = '<div class="detail-muted">正在加载热力图…</div>';
+  if (constituents) constituents.innerHTML = '<div class="detail-muted">正在加载成分股…</div>';
+
+  // Find watchlist stocks for this sector (by name match)
+  const group = watchlistGroups.find(g => g.name === sectorName);
+  const sectorStocks = group?.stocks || [];
+
   const [ivResult, hmResult] = await Promise.allSettled([
     api.sectorIV(sectorId),
     api.sectorHeatmap(sectorId)
@@ -155,8 +220,11 @@ async function loadSectorDetail(sectorId, sectorName) {
   }
   const hmPayload = hmResult.status === 'fulfilled' ? hmResult.value : FALLBACK_HEATMAP;
   if (heatmap) heatmap.innerHTML = renderHeatmap(hmPayload);
-  // Wire ticker clicks in the new content
-  document.querySelectorAll('#iv-ranking-list [data-ticker], #sector-heatmap [data-ticker]').forEach((b) => {
+  if (constituents) constituents.innerHTML = renderConstituents(sectorStocks);
+  if (stats) stats.innerHTML = renderSectorStats(sectorName, ivItems, sectorStocks);
+
+  // Wire ticker clicks
+  document.querySelectorAll('#iv-ranking-list [data-ticker], #sector-heatmap [data-ticker], #sector-constituents [data-ticker]').forEach((b) => {
     b.addEventListener('click', () => navigateToDetail(b.dataset.ticker));
   });
 }
@@ -221,7 +289,7 @@ export async function renderSectors() {
         if (id) {
           sectorGrid.querySelectorAll('.sector-card').forEach(c => c.classList.remove('is-active'));
           card.classList.add('is-active');
-          loadSectorDetail(id, name);
+          loadSectorDetail(id, name, watchlistGroups);
         }
       });
     });
@@ -230,7 +298,7 @@ export async function renderSectors() {
   // Load first sector's iv-ranking and heatmap by default
   if (sectorList.length) {
     sectorGrid.querySelector('.sector-card')?.classList.add('is-active');
-    await loadSectorDetail(sectorList[0].id, sectorList[0].name);
+    await loadSectorDetail(sectorList[0].id, sectorList[0].name, watchlistGroups);
   }
 
   // Wire ticker pill clicks
