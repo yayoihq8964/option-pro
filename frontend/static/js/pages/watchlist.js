@@ -1,5 +1,6 @@
 import { api } from '../api.js';
 import { renderHeatmap } from '../components/heatmap.js';
+import { renderMarketStatus } from '../components/marketStatus.js';
 
 const SECTOR_BY_TICKER = {
   AAPL: 'TECH', MSFT: 'TECH', GOOGL: 'TECH', GOOG: 'TECH', META: 'TECH', AMZN: 'TECH', NFLX: 'TECH', CRM: 'TECH', ORCL: 'TECH', ADBE: 'TECH',
@@ -182,11 +183,7 @@ function renderWatchlistShell(isLoading = false) {
           <h1 id="terminal-title">Intelligence Terminal</h1>
           <p>信号分析与波动率监控</p>
         </div>
-        <div class="terminal-status panel">
-          <span class="label-caps">市场状态</span>
-          <strong>美股时段</strong>
-          <em class="up mono font-data-mono" data-numeric>开盘 · 实时</em>
-        </div>
+        <div id="market-status-panel" class="market-status-panel"></div>
       </header>
       <div class="terminal-layout">
         <div>
@@ -228,6 +225,7 @@ function renderWatchlistShell(isLoading = false) {
 
 export async function renderWatchlist() {
   renderWatchlistShell(true);
+  renderMarketStatus(document.getElementById('market-status-panel'));
   const grid = document.getElementById('watchlist-grid');
   const heatmap = document.getElementById('terminal-heatmap');
   try {
