@@ -23,13 +23,14 @@ def _get_client() -> OpenAI:
 def _ask(prompt: str, use_web_search: bool = False) -> str:
     client = _get_client()
     tools = [{"type": "web_search_preview"}] if use_web_search else []
-    reasoning = os.environ.get("OPENAI_REASONING", "high")
+    # Latency-tuned: low reasoning + no web search keeps signal/alert analysis <10s
+    reasoning = os.environ.get("OPENAI_REASONING", "low")
     response = client.responses.create(
         model=os.environ.get("OPENAI_MODEL", "gpt-5.4-mini-2026-03-17"),
         input=prompt,
         tools=tools,
         reasoning={"effort": reasoning},
-        timeout=45,
+        timeout=50,
     )
     for item in response.output:
         if item.type == "message":
@@ -85,7 +86,7 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
 仅返回JSON。"""
 
     try:
-        raw = _ask(prompt, use_web_search=True)
+        raw = _ask(prompt, use_web_search=False)
         result = _parse_json(raw)
         _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
@@ -205,7 +206,8 @@ def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str =
 {json.dumps(data, ensure_ascii=False, indent=2, default=str)}
 """
     try:
-        raw = _ask(prompt, use_web_search=True)
+        # web_search adds 30-100s latency; disable for signals analysis (we don't need real-time event lookup)
+        raw = _ask(prompt, use_web_search=False)
         result = _parse_json(raw)
         result.setdefault("asset", symbol)
         result.setdefault("horizon", "5-20 trading days")

@@ -60,7 +60,24 @@ async def stock_ai_analysis(ticker: str, request: Request):
         if isinstance(signals, dict):
             signals.pop("_cached", None)
         scores = compute_stock_scores(signals)
-        llm_result = await asyncio.to_thread(ai_analysis.analyze_signals, symbol, signals, scores, fp)
+        # 40s ceiling — fallback to programmatic-only response if AI hangs
+        try:
+            llm_result = await asyncio.wait_for(
+                asyncio.to_thread(ai_analysis.analyze_signals, symbol, signals, scores, fp),
+                timeout=40
+            )
+        except asyncio.TimeoutError:
+            llm_result = {
+                "asset": symbol,
+                "dominant_regime": "ai_timeout",
+                "summary": "AI 分析超时（>60秒），仅展示程序化分数",
+                "top_risk_confidence": scores.get("top_score"),
+                "bottom_opportunity_confidence": scores.get("bottom_score"),
+                "dip_buy_quality": scores.get("dip_buy_quality"),
+                "data_quality": scores.get("data_quality"),
+                "final_bias": "insufficient_data",
+                "error": "ai_timeout",
+            }
         return _sanitize({**llm_result, "raw_signals": signals, "raw_scores": scores, "as_of": today_str()})
     except Exception as e:
         raise HTTPException(500, str(e))
