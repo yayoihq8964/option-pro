@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from typing import Any
 
 import yfinance as yf
 from fastapi import APIRouter, HTTPException
@@ -10,6 +12,23 @@ from app.services import yahoo
 from app.services.sectors import SECTORS
 
 router = APIRouter(prefix="/api/sectors", tags=["sectors"])
+
+# Simple TTL cache shared by sector endpoints (10 min — IV ranks change slowly)
+_cache: dict[str, tuple[float, Any]] = {}
+
+async def _cached(key: str, ttl: int, loader):
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        value = await loader()
+    except Exception:
+        if hit:
+            return hit[1]
+        raise
+    _cache[key] = (now + ttl, value)
+    return value
 
 
 def ensure_sector(sector_id: str) -> None:
@@ -25,6 +44,10 @@ async def list_sectors():
 @router.get("/{sector_id}/iv-ranking")
 async def iv_ranking(sector_id: str):
     ensure_sector(sector_id)
+    return await _cached(f"iv:{sector_id}", 600, lambda: _iv_ranking_impl(sector_id))
+
+
+async def _iv_ranking_impl(sector_id: str):
     sector = SECTORS[sector_id]
 
     def load() -> dict:
@@ -66,6 +89,10 @@ async def iv_ranking(sector_id: str):
 @router.get("/{sector_id}/heatmap")
 async def heatmap(sector_id: str):
     ensure_sector(sector_id)
+    return await _cached(f"hm:{sector_id}", 600, lambda: _heatmap_impl(sector_id))
+
+
+async def _heatmap_impl(sector_id: str):
     sector = SECTORS[sector_id]
 
     def load() -> dict:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from typing import Any
 
 import yfinance as yf
@@ -9,6 +10,28 @@ from fastapi import APIRouter, Query
 
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Server-side TTL cache
+# Backstop against Yahoo rate-limiting + much faster page loads.
+# Returns stale on errors so a flaky API doesn't nuke the UI.
+# ──────────────────────────────────────────────────────────────────────────────
+_endpoint_cache: dict[str, tuple[float, Any]] = {}
+
+async def _cached_endpoint(key: str, ttl: int, loader):
+    now = time.time()
+    hit = _endpoint_cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    try:
+        value = await loader()
+    except Exception:
+        if hit:
+            return hit[1]  # stale fallback
+        raise
+    _endpoint_cache[key] = (now + ttl, value)
+    return value
 
 
 def _sanitize(obj):
@@ -71,6 +94,10 @@ KNOWN_TICKERS = {
 
 @router.get("/watchlist")
 async def watchlist():
+    return await _cached_endpoint("watchlist", 300, _build_watchlist)
+
+
+async def _build_watchlist():
     from app.services.sectors import SECTORS
 
     all_tickers = []
@@ -288,6 +315,10 @@ async def stock_signals(ticker: str):
 
 @router.get("/{ticker}")
 async def stock_overview(ticker: str):
+    return await _cached_endpoint(f"stock:{ticker.upper()}", 300, lambda: _stock_overview_impl(ticker))
+
+
+async def _stock_overview_impl(ticker: str):
     def _work():
         tk = yf.Ticker(ticker.upper())
         info = tk.info
@@ -346,8 +377,20 @@ def _compute_sma(data, period):
     return result
 
 
+# Per-timeframe TTL (seconds). Longer timeframes change much more slowly.
+_CHART_TTL = {"5m": 300, "15m": 600, "1h": 1800, "1d": 3600, "1w": 21600}
+
+
 @router.get("/{ticker}/chart")
 async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(5m|15m|1h|1d|1w)$")):
+    return await _cached_endpoint(
+        f"chart:{ticker.upper()}:{range}",
+        _CHART_TTL.get(range, 600),
+        lambda: _stock_chart_impl(ticker, range)
+    )
+
+
+async def _stock_chart_impl(ticker: str, range: str):
     def _work():
         # Buttons = K-line intervals (周期), fetch plenty of data for scrolling
         # (yf_period, yf_interval, prepost, visible_bars)

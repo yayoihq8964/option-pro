@@ -223,7 +223,7 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
             "data_limited": False,
         }
 
-    return _cached(f"chain:{symbol}:{expiration}", 120, load)
+    return _cached(f"chain:{symbol}:{expiration}", 300, load)
 
 
 def get_stock_iv(ticker: str) -> float | None:
