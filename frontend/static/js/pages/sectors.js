@@ -57,13 +57,16 @@ function normalizeSectors(payload) {
   }).filter((sector) => sector.name);
 }
 
-function normalizeIvRanking(payload) {
-  const items = Array.isArray(payload) ? payload : (payload?.ivRanking ?? payload?.iv_ranking ?? payload?.items ?? payload?.data ?? []);
+function normalizeIvRanking(payload, sectorName) {
+  // API returns {rankings: [{ticker, iv_percentile}], sector_name, ...}
+  const items = Array.isArray(payload)
+    ? payload
+    : (payload?.rankings ?? payload?.ivRanking ?? payload?.iv_ranking ?? payload?.items ?? payload?.data ?? []);
   return items.map((item) => ({
     ticker: String(item.ticker ?? item.symbol ?? '').toUpperCase(),
-    sector: item.sector ?? item.industry ?? '市场',
-    ivRank: Number(item.ivRank ?? item.iv_rank ?? item.rank ?? item.score ?? 0),
-    iv: Number(item.iv ?? item.impliedVolatility ?? item.implied_volatility ?? 0),
+    sector: item.sector ?? item.industry ?? sectorName ?? '市场',
+    ivRank: Number(item.iv_percentile ?? item.ivRank ?? item.iv_rank ?? item.rank ?? item.score ?? 0),
+    iv: Number(item.iv ?? item.impliedVolatility ?? item.implied_volatility ?? item.iv_percentile ?? 0),
     change: Number(item.changePercent ?? item.change_percent ?? item.change ?? 0)
   })).filter((item) => item.ticker);
 }
@@ -124,37 +127,87 @@ function renderShell() {
   `;
 }
 
+async function loadSectorDetail(sectorId, sectorName) {
+  const ivList = document.getElementById('iv-ranking-list');
+  const heatmap = document.getElementById('sector-heatmap');
+  const ivTitle = document.getElementById('iv-ranking-title');
+  const heatmapTitle = document.getElementById('heatmap-title');
+  if (ivTitle) ivTitle.textContent = `${sectorName} · IV 排名`;
+  if (heatmapTitle) heatmapTitle.textContent = `${sectorName} · 波动率热力图`;
+  if (ivList) ivList.innerHTML = '<div class="detail-muted">正在加载 IV 排名…</div>';
+  if (heatmap) heatmap.innerHTML = '<div class="detail-muted">正在加载热力图…</div>';
+  const [ivResult, hmResult] = await Promise.allSettled([
+    api.sectorIV(sectorId),
+    api.sectorHeatmap(sectorId)
+  ]);
+  let ivItems = FALLBACK_IV;
+  if (ivResult.status === 'fulfilled') {
+    const normalized = normalizeIvRanking(ivResult.value, sectorName);
+    if (normalized.length) ivItems = normalized;
+  }
+  if (ivList) ivList.innerHTML = renderIvRanking(ivItems);
+  const hmPayload = hmResult.status === 'fulfilled' ? hmResult.value : FALLBACK_HEATMAP;
+  if (heatmap) heatmap.innerHTML = renderHeatmap(hmPayload);
+  // Wire ticker clicks in the new content
+  document.querySelectorAll('#iv-ranking-list [data-ticker], #sector-heatmap [data-ticker]').forEach((b) => {
+    b.addEventListener('click', () => navigateToDetail(b.dataset.ticker));
+  });
+}
+
 export async function renderSectors() {
   renderShell();
   const sectorGrid = document.getElementById('sector-card-grid');
-  const ivList = document.getElementById('iv-ranking-list');
-  const heatmap = document.getElementById('sector-heatmap');
 
-  let sectors = FALLBACK_SECTORS, ivItems = FALLBACK_IV, heatmapPayload = FALLBACK_HEATMAP;
+  let sectors = FALLBACK_SECTORS;
+  let sectorList = [];
   try {
     const sectorData = await api.sectors();
+    sectorList = sectorData?.sectors || [];
     const rawSectors = normalizeSectors(sectorData);
     if (rawSectors.length) sectors = rawSectors;
-    // Use first sector for iv-ranking and heatmap
-    const firstId = sectorData?.sectors?.[0]?.id || 'semiconductors';
-    const [ivResult, hmResult] = await Promise.allSettled([
-      api.sectorIV(firstId),
-      api.sectorHeatmap(firstId)
-    ]);
-    if (ivResult.status === 'fulfilled') {
-      const normalized = normalizeIvRanking(ivResult.value);
-      if (normalized.length) ivItems = normalized;
-    }
-    if (hmResult.status === 'fulfilled') heatmapPayload = hmResult.value;
   } catch (e) {
     console.warn('Sectors data load error:', e);
   }
 
-  if (sectorGrid) sectorGrid.innerHTML = renderSectorCards(sectors);
-  if (ivList) ivList.innerHTML = renderIvRanking(ivItems);
-  if (heatmap) heatmap.innerHTML = renderHeatmap(heatmapPayload);
+  if (sectorGrid) {
+    sectorGrid.innerHTML = sectors.map((sector, i) => `
+      <article class="sector-card" data-sector-id="${sectorList[i]?.id || sector.id || ''}" data-sector-name="${sector.name}" style="cursor:pointer">
+        <div class="sector-card__heading">
+          <span class="label-caps">板块</span>
+          <strong>${sector.name}</strong>
+        </div>
+        <div class="sector-card__metrics">
+          <span><small class="label-caps">表现</small><b class="mono font-data-mono ${sector.performance >= 0 ? 'up' : 'down'}" data-numeric>${formatPercent(sector.performance)}</b></span>
+          <span><small class="label-caps">平均 IV</small><b class="mono font-data-mono" data-numeric>${Number.isFinite(sector.iv) ? sector.iv.toFixed(1) : '—'}</b></span>
+        </div>
+        <div class="sector-tabs">
+          ${(sector.leaders.length ? sector.leaders : [sector.ticker]).filter(Boolean).map((t) => `<button class="sector-pill" type="button" data-ticker="${t}">${t}</button>`).join('')}
+        </div>
+      </article>
+    `).join('');
+    // Wire sector card clicks (excluding the sector-pill ticker buttons)
+    sectorGrid.querySelectorAll('.sector-card').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.sector-pill')) return;
+        const id = card.dataset.sectorId;
+        const name = card.dataset.sectorName;
+        if (id) {
+          sectorGrid.querySelectorAll('.sector-card').forEach(c => c.classList.remove('is-active'));
+          card.classList.add('is-active');
+          loadSectorDetail(id, name);
+        }
+      });
+    });
+  }
 
-  document.querySelectorAll('[data-ticker]').forEach((button) => {
+  // Load first sector's iv-ranking and heatmap by default
+  if (sectorList.length) {
+    sectorGrid.querySelector('.sector-card')?.classList.add('is-active');
+    await loadSectorDetail(sectorList[0].id, sectorList[0].name);
+  }
+
+  // Wire ticker pill clicks
+  document.querySelectorAll('.sector-pill[data-ticker]').forEach((button) => {
     button.addEventListener('click', () => navigateToDetail(button.dataset.ticker));
   });
 }

@@ -1,29 +1,34 @@
 import { api, safe } from '../api.js';
 
 const fmt = (n, d = 1) => n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toFixed(d);
+const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
-function color(score) {
+// Score → color (low risk = emerald, high risk = crimson)
+function scoreBarColor(score) {
   const s = Number(score || 0);
-  if (s < 30) return 'bg-tertiary';
-  if (s < 50) return 'bg-amber-400';
-  if (s < 70) return 'bg-orange-500';
-  return 'bg-error';
+  if (s < 30) return 'var(--color-emerald)';
+  if (s < 50) return '#d97706'; // amber
+  if (s < 70) return '#ea580c'; // orange
+  return 'var(--color-crimson)';
 }
 
 function gauge(title, score, label, reasons = null) {
   const s = Math.max(0, Math.min(100, Number(score || 0)));
+  const color = scoreBarColor(s);
   const raising = reasons?.raising || [];
   const suppressing = reasons?.suppressing || [];
-  return `<div class="rounded-3xl bg-white border border-outline-variant/10 p-5 shadow-sm">
-    <div class="flex items-center justify-between mb-3">
-      <p class="text-[10px] font-black uppercase tracking-widest text-on-surface-variant">${title}</p>
-      <span class="text-2xl font-black font-headline tabular-nums">${Math.round(s)}<span class="text-xs text-on-surface-variant">/100</span></span>
+  return `<div class="panel" style="padding:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <span class="label-caps">${esc(title)}</span>
+      <span class="mono" style="font-size:22px;font-weight:800;letter-spacing:-.02em">${Math.round(s)}<span class="label-caps" style="color:var(--color-muted);margin-left:4px;font-size:10px">/100</span></span>
     </div>
-    <div class="h-3 rounded-full bg-surface-container overflow-hidden"><div class="h-full ${color(s)} rounded-full transition-all" style="width:${s}%"></div></div>
-    <p class="mt-2 text-xs font-bold text-on-surface-variant">${label || ''}</p>
-    ${(raising.length || suppressing.length) ? `<div class="mt-3 space-y-1 text-[11px] leading-snug">
-      ${raising.length ? `<p><b>抬高因素:</b> ${raising.join('，')}</p>` : ''}
-      ${suppressing.length ? `<p class="text-on-surface-variant"><b>压低因素:</b> ${suppressing.join('，')}</p>` : ''}
+    <div style="height:6px;border-radius:999px;background:var(--color-container);overflow:hidden;margin-bottom:10px">
+      <div style="height:100%;width:${s}%;background:${color};border-radius:999px;transition:width .3s"></div>
+    </div>
+    <p style="margin:0 0 ${(raising.length || suppressing.length) ? '10px' : '0'};font-size:12px;font-weight:700;color:var(--color-muted)">${esc(label || '')}</p>
+    ${(raising.length || suppressing.length) ? `<div style="display:grid;gap:6px;font-size:11px;line-height:1.5">
+      ${raising.length ? `<p style="margin:0;color:var(--color-on-surface)"><b>抬高因素:</b> ${raising.map(esc).join('，')}</p>` : ''}
+      ${suppressing.length ? `<p style="margin:0;color:var(--color-muted)"><b>压低因素:</b> ${suppressing.map(esc).join('，')}</p>` : ''}
     </div>` : ''}
   </div>`;
 }
@@ -37,31 +42,39 @@ function interpret(k, sig) {
   if (k.includes('relative')) return v > 1 ? '偏强' : v < -1 ? '偏弱' : '接近大盘';
   if (k.includes('iv') || k.includes('atr')) return v > 70 ? '波动高' : v < 30 ? '波动低' : '波动正常';
   if (k.includes('close_position')) return v > 70 ? '收近高位' : v < 30 ? '收近低位' : '区间中部';
-  return sig?.top_score > sig?.bottom_score ? '偏顶部风险' : sig?.bottom_score > sig?.top_score ? '偏底部机会' : '中性';
+  return '—';
 }
 
 function renderAiCard(data) {
-  if (data?.__error || data?.error) return `<div class="rounded-2xl p-5 bg-surface-container-low text-center text-sm text-on-surface-variant">AI 深度分析暂不可用</div>`;
+  if (data?.__error || data?.error) {
+    return `<div class="ai-result-card"><p style="margin:0;color:var(--color-muted);font-size:13px">AI 深度分析暂不可用</p></div>`;
+  }
   const levels = data?.key_levels || {};
-  return `<div class="rounded-[2rem] p-6 bg-gradient-to-br from-[#6a1cf6] to-[#4953ac] text-white shadow-xl relative overflow-hidden">
-    <div class="absolute -top-10 -right-10 w-44 h-44 bg-white/10 rounded-full blur-3xl"></div>
-    <div class="relative z-10 space-y-3">
-      <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center"><span class="material-symbols-outlined">auto_awesome</span></div><h4 class="font-headline font-extrabold text-lg">Oracle Signal Review</h4></div>
-      <div class="grid grid-cols-2 gap-3 text-sm">
-        <div class="bg-white/15 rounded-xl p-3"><p class="text-white/60 text-[10px] font-black uppercase">判断</p><p class="font-bold">${data.final_bias || data.dominant_regime || '—'}</p></div>
-        <div class="bg-white/15 rounded-xl p-3"><p class="text-white/60 text-[10px] font-black uppercase">置信度</p><p class="font-bold">Top ${data.top_risk_confidence ?? '—'} · Bottom ${data.bottom_opportunity_confidence ?? '—'}</p></div>
-      </div>
-      ${data.most_important_signal ? `<p class="text-sm text-white/85"><b>最重要信号:</b> ${data.most_important_signal}</p>` : ''}
-      <p class="text-sm text-white/85"><b>支撑:</b> ${(levels.support || []).join(', ') || '—'} | <b>阻力:</b> ${(levels.resistance || []).join(', ') || '—'}</p>
-      ${(data.event_risks || []).length ? `<p class="text-xs text-white/70"><b>事件风险:</b> ${data.event_risks.join('；')}</p>` : ''}
-      ${data.summary ? `<p class="text-sm leading-relaxed text-white/85">${data.summary}</p>` : ''}
+  return `<div class="ai-result-card">
+    <div class="ai-result-card__header">
+      <span class="label-caps">AI 信号深度分析</span>
+      ${data._cached ? '<span class="label-caps" style="background:var(--color-container);padding:3px 7px;border-radius:999px">缓存</span>' : ''}
     </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div style="padding:10px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px">
+        <div class="label-caps" style="margin-bottom:4px">判断</div>
+        <strong style="font-size:13px">${esc(data.final_bias || data.dominant_regime || '—')}</strong>
+      </div>
+      <div style="padding:10px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px">
+        <div class="label-caps" style="margin-bottom:4px">置信度</div>
+        <strong class="mono" style="font-size:13px">Top ${esc(data.top_risk_confidence ?? '—')} · Bot ${esc(data.bottom_opportunity_confidence ?? '—')}</strong>
+      </div>
+    </div>
+    ${data.most_important_signal ? `<p style="margin:0 0 8px;font-size:13px;line-height:1.6"><b>最重要信号:</b> ${esc(data.most_important_signal)}</p>` : ''}
+    <p style="margin:0 0 8px;font-size:13px;line-height:1.6"><b>支撑:</b> <span class="mono">${(levels.support || []).join(', ') || '—'}</span> &nbsp;|&nbsp; <b>阻力:</b> <span class="mono">${(levels.resistance || []).join(', ') || '—'}</span></p>
+    ${(data.event_risks || []).length ? `<p style="margin:0 0 8px;font-size:12px;color:var(--color-muted)"><b>事件风险:</b> ${data.event_risks.map(esc).join('；')}</p>` : ''}
+    ${data.summary ? `<p style="margin:0;font-size:13px;line-height:1.65;color:var(--color-muted)">${esc(data.summary)}</p>` : ''}
   </div>`;
 }
 
 export function renderTopBottomSignals(container, ticker, data) {
   if (!data || data.__error) {
-    container.innerHTML = `<section class="rounded-3xl bg-white p-6 border border-outline-variant/10 text-sm text-on-surface-variant">Top/Bottom Signal Analysis 暂不可用</section>`;
+    container.innerHTML = `<div class="panel" style="padding:20px;color:var(--color-muted);font-size:13px">Top/Bottom Signal Analysis 暂不可用</div>`;
     return;
   }
   const scores = data.scores || {};
@@ -69,24 +82,43 @@ export function renderTopBottomSignals(container, ticker, data) {
   const preferred = ['rsi14','sma20_dist','sma50_dist','return_20d','volume_zscore','macd_hist','relative_strength_spy','iv_rank','close_position','obv_divergence'];
   const rows = preferred.filter(k => signals[k]).map(k => {
     const s = signals[k];
-    return `<li class="flex items-center justify-between gap-3 py-2 border-b border-outline-variant/10 last:border-0"><span class="font-bold text-sm">${s.label || k}</span><span class="text-sm text-on-surface-variant tabular-nums">${fmt(s.value, k.includes('macd') ? 4 : 1)} → ${interpret(k, s)}</span></li>`;
+    return `<li style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--color-border);font-size:13px"><span style="font-weight:700">${esc(s.label || k)}</span><span class="mono" style="color:var(--color-muted)">${fmt(s.value, k.includes('macd') ? 4 : 1)} → ${interpret(k, s)}</span></li>`;
   }).join('');
-  container.innerHTML = `<section class="space-y-5 rounded-[2rem] bg-surface-container-lowest border border-outline-variant/10 p-5 md:p-6 shadow-sm">
-    <div class="flex items-center justify-between gap-3 flex-wrap"><div><h3 class="font-headline font-extrabold text-xl">Top/Bottom Signal Analysis</h3><p class="text-[10px] font-bold text-on-surface-variant mt-1">预测窗口：5-20 交易日 · 周期：日线</p></div><span class="text-[10px] font-bold text-on-surface-variant">as of ${data.as_of || ''}${data._cached ? ' · cached' : ''}</span></div>
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">${gauge('趋势偏向', data.trend_bias_score ?? 50, data.trend_bias_label || '中性')}${gauge('顶部风险', scores.top_score, scores.top_label, scores.top_reasons)}${gauge('底部机会', scores.bottom_score, scores.bottom_label, scores.bottom_reasons)}${gauge('回调买点', scores.dip_buy_quality, scores.dip_buy_label, {raising: scores.dip_buy_reasons || [], suppressing: []})}</div>
-    <details open class="rounded-2xl bg-surface-container-low p-4"><summary class="cursor-pointer text-xs font-black uppercase tracking-widest text-on-surface-variant">Signal breakdown</summary><ul class="mt-3">${rows}</ul></details>
-    <button id="tb-ai-btn" class="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-[#6a1cf6] to-[#4953ac] text-white font-bold text-sm hover:shadow-lg active:scale-[0.98] transition-all"><span class="material-symbols-outlined text-lg">psychology</span> AI 深度分析</button>
-    <div id="tb-ai-result" class="hidden"></div>
-  </section>`;
+
+  container.innerHTML = `<div class="panel" style="padding:20px;display:grid;gap:16px">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <span class="label-caps">Top / Bottom Signal Analysis</span>
+        <h3 style="margin:6px 0 0;font-size:20px;font-weight:800;letter-spacing:-.03em">顶底信号分析</h3>
+        <p style="margin:4px 0 0;font-size:11px;font-weight:700;color:var(--color-muted)">预测窗口：5-20 交易日 · 周期：日线</p>
+      </div>
+      <span class="label-caps" style="color:var(--color-muted)">as of ${esc(data.as_of || '')}${data._cached ? ' · cached' : ''}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+      ${gauge('趋势偏向', data.trend_bias_score ?? 50, data.trend_bias_label || '中性')}
+      ${gauge('顶部风险', scores.top_score, scores.top_label, scores.top_reasons)}
+      ${gauge('底部机会', scores.bottom_score, scores.bottom_label, scores.bottom_reasons)}
+      ${gauge('回调买点', scores.dip_buy_quality, scores.dip_buy_label, { raising: scores.dip_buy_reasons || [], suppressing: [] })}
+    </div>
+    <details open style="padding:14px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px">
+      <summary class="label-caps" style="cursor:pointer">Signal Breakdown · 信号明细</summary>
+      <ul style="margin:10px 0 0;padding:0;list-style:none">${rows}</ul>
+    </details>
+    <button id="tb-ai-btn" class="ai-analysis-button" style="width:100%;justify-content:center;display:inline-flex;align-items:center;gap:8px">
+      <span class="material-symbols-outlined" style="font-size:18px">psychology</span> AI 深度分析
+    </button>
+    <div id="tb-ai-result" style="display:none"></div>
+  </div>`;
+
   const btn = container.querySelector('#tb-ai-btn');
   const result = container.querySelector('#tb-ai-result');
   btn.onclick = async () => {
-    btn.innerHTML = '<span class="w-4 h-4 border-2 border-white/60 border-t-transparent rounded-full animate-spin"></span> 正在分析信号一致性...';
+    btn.innerHTML = '<span style="width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;display:inline-block"></span> 正在分析信号一致性...';
     btn.disabled = true;
     const ai = await safe(api.analyzeTopBottomSignals(ticker));
-    result.classList.remove('hidden');
+    result.style.display = 'block';
     result.innerHTML = renderAiCard(ai);
-    btn.innerHTML = '<span class="material-symbols-outlined text-lg">psychology</span> 重新分析';
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px">psychology</span> 重新分析';
     btn.disabled = false;
   };
 }

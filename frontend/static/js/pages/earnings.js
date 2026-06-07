@@ -19,16 +19,59 @@ function navigateToDetail(ticker) {
   window.location.hash = `#detail/${encodeURIComponent(symbol)}`;
 }
 
+// US tickers default to USD; can extend with overrides later
+function inferCurrency(ticker, sector) {
+  // ADRs of HK/CN stocks still report in USD via NYSE/NASDAQ, so USD is safe default
+  return 'USD';
+}
+
+function quarterFromDate(dateStr) {
+  if (!dateStr || dateStr === 'TBD') return '—';
+  const m = String(dateStr).match(/(\d{4})-(\d{2})/);
+  if (!m) return '—';
+  const year = m[1];
+  const month = parseInt(m[2], 10);
+  const q = Math.ceil(month / 3);
+  return `Q${q} ${year}`;
+}
+
+function fmtLargeMoney(value, currency = 'USD') {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return '—';
+  const symbol = currency === 'USD' ? '$' : '';
+  const abs = Math.abs(n);
+  let body;
+  if (abs >= 1e12) body = `${symbol}${(n / 1e12).toFixed(2)}T`;
+  else if (abs >= 1e9) body = `${symbol}${(n / 1e9).toFixed(2)}B`;
+  else if (abs >= 1e6) body = `${symbol}${(n / 1e6).toFixed(1)}M`;
+  else if (abs >= 1e3) body = `${symbol}${(n / 1e3).toFixed(1)}K`;
+  else body = `${symbol}${n.toFixed(2)}`;
+  return `${body} ${currency}`;
+}
+
+function fmtEps(value, currency = 'USD') {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  const symbol = currency === 'USD' ? '$' : '';
+  return `${symbol}${n.toFixed(2)}`;
+}
+
 function normalizeEarnings(payload) {
   const items = Array.isArray(payload) ? payload : (payload?.earnings ?? payload?.items ?? payload?.data ?? payload?.calendar ?? []);
-  return items.map((item) => ({
-    ticker: String(item.ticker ?? item.symbol ?? '').toUpperCase(),
-    company: item.company ?? item.companyName ?? item.company_name ?? item.name ?? '上市公司',
-    date: item.date ?? item.reportDate ?? item.report_date ?? item.earningsDate ?? item.earnings_date ?? 'TBD',
-    period: item.period ?? item.quarter ?? item.fiscalQuarter ?? item.fiscal_quarter ?? '—',
-    epsEstimate: item.epsEstimate ?? item.eps_estimate ?? item.estimatedEps ?? item.estimated_eps ?? '—',
-    revenueEstimate: item.revenueEstimate ?? item.revenue_estimate ?? item.estimatedRevenue ?? item.estimated_revenue ?? '—'
-  })).filter((item) => item.ticker);
+  return items.map((item) => {
+    const date = item.date ?? item.reportDate ?? item.report_date ?? item.earningsDate ?? item.earnings_date ?? 'TBD';
+    const ticker = String(item.ticker ?? item.symbol ?? '').toUpperCase();
+    const currency = inferCurrency(ticker, item.sector);
+    const explicitPeriod = item.period ?? item.quarter ?? item.fiscalQuarter ?? item.fiscal_quarter;
+    return {
+      ticker,
+      company: item.company ?? item.companyName ?? item.company_name ?? item.name ?? '上市公司',
+      date,
+      period: explicitPeriod || quarterFromDate(date),
+      epsEstimate: fmtEps(item.epsEstimate ?? item.eps_estimate ?? item.estimatedEps ?? item.estimated_eps, currency),
+      revenueEstimate: fmtLargeMoney(item.revenueEstimate ?? item.revenue_estimate ?? item.estimatedRevenue ?? item.estimated_revenue, currency)
+    };
+  }).filter((item) => item.ticker);
 }
 
 function renderEarningsRows(items) {

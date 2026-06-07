@@ -52,7 +52,7 @@ export function getHeatmapTileColor(value = 0) {
 export function normalizeHeatmapPayload(payload) {
   const items = Array.isArray(payload)
     ? payload
-    : (payload?.heatmap ?? payload?.items ?? payload?.data ?? payload?.sectors ?? []);
+    : (payload?.data ?? payload?.heatmap ?? payload?.items ?? payload?.sectors ?? payload?.rankings ?? []);
 
   return items.map((item) => {
     const ticker = String(item.ticker ?? item.symbol ?? item.name ?? item.sector ?? '').toUpperCase();
