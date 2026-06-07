@@ -76,7 +76,9 @@ function normalizeStock(stock) {
     sector: String(stock.sector ?? stock.industry ?? stock._groupName ?? SECTOR_BY_TICKER[ticker] ?? 'WATCH').toUpperCase(),
     price,
     changePercent,
-    spark: spark.length ? spark : [price * 0.98, price * 0.99, price * 0.985, price * 1.005, price * 1.01, price * 1.004, price].filter(Number.isFinite),
+    // Real backend data only. Empty array means "no sparkline available" —
+    // the card renderer should handle that gracefully (don't fake a fake curve).
+    spark: spark.length ? spark : [],
     signalSummary: stock.signalSummary ?? stock.signal_summary ?? stock.signal ?? stock.summary ?? ''
   };
 }

@@ -145,8 +145,46 @@ async def _build_watchlist():
         async with sem:
             return await asyncio.to_thread(_work)
 
-    results = await asyncio.gather(*[fetch_one(t) for t in all_tickers], return_exceptions=True)
+    # Fetch real sparkline data (5-day daily closes) using yfinance batch download.
+    # ONE HTTP call for all 228 tickers — much cheaper than per-ticker history().
+    def _fetch_sparks():
+        try:
+            import yfinance as yf_mod
+            # group_by='ticker' returns nested cols; auto_adjust=False to get raw close
+            df = yf_mod.download(
+                tickers=" ".join(all_tickers),
+                period="5d",
+                interval="1d",
+                group_by="ticker",
+                threads=False,  # we already control concurrency
+                progress=False,
+                auto_adjust=False,
+                session=getattr(__import__("app.services.yahoo", fromlist=["_yf_session"]),
+                                "_yf_session", None),
+            )
+            sparks = {}
+            for t in all_tickers:
+                try:
+                    if t in df.columns.get_level_values(0):
+                        closes = df[t]["Close"].dropna().tolist()
+                        if closes:
+                            sparks[t] = [round(float(c), 2) for c in closes[-7:]]
+                except Exception:
+                    continue
+            return sparks
+        except Exception:
+            return {}
+
+    # Run sparkline batch + per-ticker price fetches concurrently
+    sparks_task = asyncio.to_thread(_fetch_sparks)
+    results, sparks = await asyncio.gather(
+        asyncio.gather(*[fetch_one(t) for t in all_tickers], return_exceptions=True),
+        sparks_task,
+    )
     price_map = {r["ticker"]: r for r in results if isinstance(r, dict)}
+    # Attach real sparkline to each stock
+    for ticker, stock in price_map.items():
+        stock["spark"] = sparks.get(ticker, [])
 
     # If yfinance limited us hard, less than 30% succeeded — treat as failure
     # so the cache returns the previous (stale) snapshot instead of an empty one.
