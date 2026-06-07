@@ -155,3 +155,20 @@ function renderCorrelationCards(data) {
       `).join('')}
     </div>`;
 }
+
+/**
+ * Returns HTML for earnings correlation panel.
+ * Usage: insert returned HTML into a container, then call bindEarningsCorrelationButton().
+ */
+export function renderEarningsCorrelationAI(label = '') {
+  return `<div class="panel" style="padding:20px;margin-top:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
+      <div>
+        <span class="label-caps">AI 财报关联</span>
+        <h3 style="margin:6px 0 0;font-size:18px;font-weight:800">${label || '财报相关性分析'}</h3>
+      </div>
+      <button class="ai-analysis-button" data-earnings-correlation-button type="button">生成分析</button>
+    </div>
+    <div data-earnings-correlation-results></div>
+  </div>`;
+}
