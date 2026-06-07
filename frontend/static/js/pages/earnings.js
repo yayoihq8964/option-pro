@@ -42,39 +42,51 @@ function normalizeEarnings(payload) {
   })).filter(it => it.ticker && it.date);
 }
 
-// ── Date math ──
+// ── Date math (all LOCAL time — avoids UTC drift in UTC+9) ──
 function parseISO(s) {
   const [y, m, d] = String(s).split('-').map(Number);
   if (!y || !m || !d) return null;
-  return new Date(Date.UTC(y, m - 1, d));
+  return new Date(y, m - 1, d);
 }
-function ymKey(date) {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+function todayISO() {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 }
-function monthLabel(date) {
-  return `${date.getUTCFullYear()} 年 ${date.getUTCMonth() + 1} 月`;
+function ymKey(year, month) {  // month is 0-11
+  return `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+function monthLabelFromYM(year, month) {
+  return `${year} 年 ${month + 1} 月`;
 }
 function firstDayOfMonth(year, month) {
-  return new Date(Date.UTC(year, month, 1));
+  return new Date(year, month, 1);
 }
 function daysInMonth(year, month) {
-  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(year, month + 1, 0).getDate();
+}
+function lastDayOfMonth(year, month) {
+  return new Date(year, month + 1, 0);
 }
 
 // ── Calendar grid ──
 function buildCalendar(year, month, byDate) {
   const first = firstDayOfMonth(year, month);
-  // We want Mon-first columns (0=Mon..6=Sun). getUTCDay: Sun=0..Sat=6
-  const firstWeekday = (first.getUTCDay() + 6) % 7;
+  // We want Mon-first columns (0=Mon..6=Sun). getDay: Sun=0..Sat=6
+  const firstWeekday = (first.getDay() + 6) % 7;
   const days = daysInMonth(year, month);
+  const todayStr = todayISO();
   const cells = [];
-  // Leading blanks (previous month)
   for (let i = 0; i < firstWeekday; i++) cells.push({ blank: true });
   for (let d = 1; d <= days; d++) {
     const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-    cells.push({ day: d, iso, items: byDate.get(iso) || [] });
+    cells.push({
+      day: d,
+      iso,
+      items: byDate.get(iso) || [],
+      isToday: iso === todayStr,
+      isPast: iso < todayStr,
+    });
   }
-  // Trailing blanks to fill the last row
   while (cells.length % 7 !== 0) cells.push({ blank: true });
   return cells;
 }
@@ -118,24 +130,35 @@ function renderShell() {
   `;
 }
 
-function renderMonthNav(months, currentIdx, onPick) {
+function renderMonthNav(months, currentIdx, onPick, todayIdx) {
   const nav = document.getElementById('earnings-month-nav');
   if (!nav) return;
-  nav.innerHTML = months.map((m, i) => `
-    <button type="button" data-month-idx="${i}"
+  const yearSpan = months.length && months[0].year !== months[months.length - 1].year;
+  const buttons = months.map((m, i) => {
+    const label = yearSpan ? `${String(m.year).slice(-2)}/${m.month + 1}` : `${m.month + 1} 月`;
+    const isToday = i === todayIdx;
+    return `<button type="button" data-month-idx="${i}"
       class="ethos-timeframe-button ${i === currentIdx ? 'active' : ''}"
-      style="min-width:64px">${m.label.replace(/^\d+\s*年\s*/, '')}</button>
-  `).join('');
+      style="min-width:60px;position:relative">${label}${isToday ? '<span style="position:absolute;top:-3px;right:-3px;width:6px;height:6px;background:var(--color-emerald);border-radius:50%"></span>' : ''}</button>`;
+  }).join('');
+  const todayBtn = todayIdx >= 0 && todayIdx !== currentIdx
+    ? `<button type="button" data-go-today
+        class="ethos-timeframe-button"
+        style="min-width:60px;background:var(--color-emerald);color:#fff;border-color:var(--color-emerald)">今天</button>`
+    : '';
+  nav.innerHTML = buttons + todayBtn;
   nav.querySelectorAll('[data-month-idx]').forEach(b => {
     b.addEventListener('click', () => onPick(Number(b.dataset.monthIdx)));
   });
+  const goToday = nav.querySelector('[data-go-today]');
+  if (goToday) goToday.addEventListener('click', () => onPick(todayIdx));
 }
 
 function renderCalendar(year, month, byDate) {
   const cal = document.getElementById('earnings-cal');
   const label = document.getElementById('earnings-month-label');
   if (!cal || !label) return;
-  label.textContent = monthLabel(new Date(Date.UTC(year, month, 1)));
+  label.textContent = monthLabelFromYM(year, month);
 
   const cells = buildCalendar(year, month, byDate);
   const weekHeader = ['一', '二', '三', '四', '五', '六', '日']
@@ -147,6 +170,13 @@ function renderCalendar(year, month, byDate) {
       return `<div style="background:#fafaf8;min-height:96px;border-radius:6px"></div>`;
     }
     const bg = colorForCount(c.items.length);
+    const opacity = c.isPast ? '0.55' : '1';
+    const border = c.isToday
+      ? '2px solid #000'
+      : '1px solid var(--color-border)';
+    const dayLabel = c.isToday
+      ? `<span style="background:#000;color:#fff;padding:1px 6px;border-radius:10px;font-size:11px">${c.day} · 今天</span>`
+      : `<span style="color:var(--color-on-surface)">${c.day}</span>`;
     const chips = c.items.slice(0, 4).map(it => `
       <button type="button"
         class="mono earnings-chip"
@@ -160,9 +190,9 @@ function renderCalendar(year, month, byDate) {
       ? `<div style="font-size:10px;color:var(--color-muted);margin-top:2px">+${c.items.length - 4} 家</div>`
       : '';
     return `
-      <div data-day-iso="${c.iso}"
-        style="background:${bg};min-height:96px;border-radius:6px;padding:6px 8px;border:1px solid var(--color-border);display:flex;flex-direction:column">
-        <div style="font-size:12px;font-weight:700;color:var(--color-on-surface);margin-bottom:4px">${c.day}</div>
+      <div data-day-iso="${c.iso}" ${c.isToday ? 'data-today="1"' : ''}
+        style="background:${bg};min-height:96px;border-radius:6px;padding:6px 8px;border:${border};display:flex;flex-direction:column;opacity:${opacity}">
+        <div style="font-size:12px;font-weight:700;margin-bottom:4px">${dayLabel}</div>
         <div style="flex:1;display:flex;flex-wrap:wrap;align-content:flex-start">${chips}${more}</div>
       </div>
     `;
@@ -342,41 +372,51 @@ export async function renderEarnings() {
     byTicker.set(e.ticker, e);
   });
 
-  // Find distinct months in data
+  // ── Find months in data + ensure current month is included ──
+  const today = new Date();
+  const todayYM = today.getFullYear() * 100 + today.getMonth();
   const monthSet = new Map();
+  // Always include current month so the "今天" button has a target
+  monthSet.set(ymKey(today.getFullYear(), today.getMonth()), {
+    year: today.getFullYear(), month: today.getMonth(),
+  });
   earnings.forEach(e => {
     const d = parseISO(e.date);
     if (!d) return;
-    const key = ymKey(d);
+    const ym = d.getFullYear() * 100 + d.getMonth();
+    // Skip fully-past months (their last day is before today)
+    if (ym < todayYM) return;
+    const key = ymKey(d.getFullYear(), d.getMonth());
     if (!monthSet.has(key)) {
-      monthSet.set(key, { year: d.getUTCFullYear(), month: d.getUTCMonth(), label: monthLabel(d) });
+      monthSet.set(key, { year: d.getFullYear(), month: d.getMonth() });
     }
   });
   const months = Array.from(monthSet.values()).sort((a, b) =>
     (a.year - b.year) * 100 + (a.month - b.month)
   );
 
-  // Pick initial month: closest to today
-  const today = new Date();
-  const todayKey = ymKey(today);
-  let currentIdx = months.findIndex(m => `${m.year}-${String(m.month + 1).padStart(2, '0')}` === todayKey);
-  if (currentIdx < 0) {
-    // pick first month >= today
-    currentIdx = months.findIndex(m => (m.year * 100 + m.month) >= (today.getFullYear() * 100 + today.getMonth()));
-    if (currentIdx < 0) currentIdx = 0;
-  }
+  // todayIdx = position of current month in the button list
+  const todayIdx = months.findIndex(m =>
+    m.year === today.getFullYear() && m.month === today.getMonth()
+  );
+  let currentIdx = todayIdx >= 0 ? todayIdx : 0;
 
   const pick = (idx) => {
+    if (idx < 0 || idx >= months.length) return;
     currentIdx = idx;
-    renderMonthNav(months, currentIdx, pick);
+    renderMonthNav(months, currentIdx, pick, todayIdx);
     renderCalendar(months[idx].year, months[idx].month, byDate);
-    // Re-bind click after re-render
     cal.querySelectorAll('.earnings-chip').forEach(btn => {
       btn.addEventListener('click', () => loadImpact(btn.dataset.ticker, byTicker));
     });
+    // Scroll today into view if visible
+    if (idx === todayIdx) {
+      const todayCell = cal.querySelector('[data-today="1"]');
+      todayCell?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   };
 
-  renderMonthNav(months, currentIdx, pick);
+  renderMonthNav(months, currentIdx, pick, todayIdx);
   renderCalendar(months[currentIdx].year, months[currentIdx].month, byDate);
   cal.querySelectorAll('.earnings-chip').forEach(btn => {
     btn.addEventListener('click', () => loadImpact(btn.dataset.ticker, byTicker));
