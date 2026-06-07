@@ -112,7 +112,15 @@ function renderShell() {
           <p>以 Ethos 白色卡片、低调边框、IV 排名与翡翠绿到深红的热力图呈现板块波动率结构。</p>
         </div>
       </header>
-      <div class="sector-card-grid" id="sector-card-grid"><div class="panel loading-card">正在加载板块数据…</div></div>
+      <div class="sector-carousel-wrap">
+        <button type="button" class="sector-carousel-arrow sector-carousel-arrow--left" id="sector-arrow-left" aria-label="向左滚动">
+          <span class="material-symbols-outlined">chevron_left</span>
+        </button>
+        <div class="sector-carousel" id="sector-card-grid"><div class="panel loading-card">正在加载板块数据…</div></div>
+        <button type="button" class="sector-carousel-arrow sector-carousel-arrow--right" id="sector-arrow-right" aria-label="向右滚动">
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
+      </div>
       <div class="sectors-layout">
         <section class="sector-section-card" aria-labelledby="iv-ranking-title">
           <div class="section-card-heading"><span class="label-caps">IV 排名</span><h2 id="iv-ranking-title">波动率领先标的</h2></div>
@@ -305,4 +313,19 @@ export async function renderSectors() {
   document.querySelectorAll('.sector-pill[data-ticker]').forEach((button) => {
     button.addEventListener('click', () => navigateToDetail(button.dataset.ticker));
   });
+
+  // Wire carousel arrows
+  const leftBtn = document.getElementById('sector-arrow-left');
+  const rightBtn = document.getElementById('sector-arrow-right');
+  const updateArrows = () => {
+    if (!sectorGrid) return;
+    const maxScroll = sectorGrid.scrollWidth - sectorGrid.clientWidth;
+    if (leftBtn) leftBtn.disabled = sectorGrid.scrollLeft <= 4;
+    if (rightBtn) rightBtn.disabled = sectorGrid.scrollLeft >= maxScroll - 4;
+  };
+  const scrollBy = (delta) => sectorGrid?.scrollBy({ left: delta, behavior: 'smooth' });
+  leftBtn?.addEventListener('click', () => scrollBy(-sectorGrid.clientWidth * 0.7));
+  rightBtn?.addEventListener('click', () => scrollBy(sectorGrid.clientWidth * 0.7));
+  sectorGrid?.addEventListener('scroll', updateArrows, { passive: true });
+  updateArrows();
 }

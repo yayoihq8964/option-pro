@@ -1,6 +1,10 @@
 import { api } from '../api.js';
 import { renderHeatmap } from '../components/heatmap.js';
 import { renderMarketStatus } from '../components/marketStatus.js';
+import {
+  getCustomTickers, initCustomFromBackend, applyCustomOrder,
+  addTicker, removeTicker, moveTicker, saveCustomTickers
+} from '../components/customWatchlist.js';
 
 const SECTOR_BY_TICKER = {
   AAPL: 'TECH', MSFT: 'TECH', GOOGL: 'TECH', GOOG: 'TECH', META: 'TECH', AMZN: 'TECH', NFLX: 'TECH', CRM: 'TECH', ORCL: 'TECH', ADBE: 'TECH',
@@ -129,11 +133,28 @@ function renderSparkline(points, isPositive) {
   `;
 }
 
-function renderStockCard(stock) {
+function renderStockCard(stock, editMode = false) {
   const isPositive = stock.changePercent >= 0;
   const toneClass = isPositive ? 'positive' : 'negative';
+  const editControls = editMode ? `
+      <div class="stock-card__edit-controls">
+        <button type="button" class="card-edit-btn" data-edit-action="left" data-ticker="${escapeHtml(stock.ticker)}" aria-label="向前移动" title="向前">
+          <span class="material-symbols-outlined">chevron_left</span>
+        </button>
+        <button type="button" class="card-edit-btn card-edit-btn--remove" data-edit-action="remove" data-ticker="${escapeHtml(stock.ticker)}" aria-label="移除" title="移除">
+          <span class="material-symbols-outlined">close</span>
+        </button>
+        <button type="button" class="card-edit-btn" data-edit-action="right" data-ticker="${escapeHtml(stock.ticker)}" aria-label="向后移动" title="向后">
+          <span class="material-symbols-outlined">chevron_right</span>
+        </button>
+      </div>` : '';
+  const cardTag = editMode ? 'div' : 'button';
+  const cardAttrs = editMode
+    ? `class="stock-card stock-card--editing" data-ticker="${escapeHtml(stock.ticker)}"`
+    : `class="stock-card" type="button" data-ticker="${escapeHtml(stock.ticker)}" aria-label="打开 ${escapeHtml(stock.ticker)} 详情"`;
   return `
-    <button class="stock-card" type="button" data-ticker="${escapeHtml(stock.ticker)}" aria-label="打开 ${escapeHtml(stock.ticker)} 详情">
+    <${cardTag} ${cardAttrs}>
+      ${editControls}
       <div class="stock-card__topline">
         <span class="sector-tag label-caps">${escapeHtml(stock.sector)}</span>
         <span class="signal-dot ${toneClass}" aria-hidden="true"></span>
@@ -148,7 +169,7 @@ function renderStockCard(stock) {
       </div>
       ${renderSparkline(stock.spark, isPositive)}
       ${stock.signalSummary ? `<p class="signal-summary">${escapeHtml(stock.signalSummary)}</p>` : ''}
-    </button>
+    </${cardTag}>
   `;
 }
 
@@ -181,10 +202,20 @@ function renderWatchlistShell(isLoading = false) {
         <div>
           <span class="label-caps">自选</span>
           <h1 id="terminal-title">Intelligence Terminal</h1>
-          <p>信号分析与波动率监控</p>
+          <p>信号分析与波动率监控 · 自定义自选已存储在本机</p>
         </div>
-        <div id="market-status-panel" class="market-status-panel"></div>
+        <div class="terminal-header-right">
+          <div id="market-status-panel" class="market-status-panel"></div>
+          <button id="watchlist-edit-btn" type="button" class="watchlist-edit-btn">
+            <span class="material-symbols-outlined">edit</span> 编辑
+          </button>
+        </div>
       </header>
+      <div id="watchlist-add-bar" class="watchlist-add-bar" hidden>
+        <input type="text" id="watchlist-add-input" placeholder="输入代码（如 NVDA），回车添加" autocomplete="off" />
+        <button type="button" id="watchlist-add-btn">添加</button>
+        <button type="button" id="watchlist-reset-btn" class="watchlist-reset-btn" title="重置为默认自选">重置默认</button>
+      </div>
       <div class="terminal-layout">
         <div>
           <div id="watchlist-grid" class="watchlist-grid ${isLoading ? 'is-loading' : ''}">
@@ -223,28 +254,132 @@ function renderWatchlistShell(isLoading = false) {
   `;
 }
 
+// Cache the latest backend data so we can re-render quickly when entering edit mode
+let __watchlistState = { backendStocks: [], heatmapData: [] };
+let __editMode = false;
+
+async function fetchAndCacheBackend() {
+  try {
+    const payload = await api.watchlist();
+    const groups = payload?.groups || [];
+    // Initialize custom from backend on first visit
+    initCustomFromBackend(groups);
+    const stocks = normalizeWatchlistPayload(payload);
+    __watchlistState.backendStocks = stocks;
+    __watchlistState.heatmapData = stocks.slice(0, 20).map(s => ({
+      ticker: s.ticker, label: s.companyName, changePercent: s.changePercent, weight: 1 + Math.abs(s.changePercent) / 2
+    }));
+    return stocks;
+  } catch (e) {
+    console.warn('api.watchlist() failed; using fallback.', e);
+    const fallback = FALLBACK_WATCHLIST.map(normalizeStock);
+    __watchlistState.backendStocks = fallback;
+    __watchlistState.heatmapData = FALLBACK_HEATMAP;
+    return fallback;
+  }
+}
+
+function renderCardsFromCustom() {
+  const grid = document.getElementById('watchlist-grid');
+  if (!grid) return;
+  const customTickers = getCustomTickers() || __watchlistState.backendStocks.map(s => s.ticker);
+  const ordered = applyCustomOrder(__watchlistState.backendStocks, customTickers).map(s => {
+    if (s._placeholder) {
+      return normalizeStock({
+        ticker: s.ticker, price: 0, change_percent: 0, name: s.ticker, sector: 'CUSTOM'
+      });
+    }
+    return s;
+  });
+  if (!ordered.length) {
+    grid.innerHTML = '<div class="detail-muted" style="padding:32px;text-align:center">自选列表为空 · 点击右上角「编辑」添加代码</div>';
+    return;
+  }
+  grid.innerHTML = ordered.map((s) => renderStockCard(s, __editMode)).join('');
+  bindCardEvents();
+}
+
+function bindCardEvents() {
+  document.querySelectorAll('.stock-card[data-ticker]').forEach((card) => {
+    card.addEventListener('click', (e) => {
+      // Don't navigate when clicking edit buttons
+      if (e.target.closest('[data-edit-action]')) return;
+      if (__editMode) return;
+      const ticker = card.dataset.ticker;
+      if (ticker) window.location.hash = `#detail/${encodeURIComponent(ticker)}`;
+    });
+  });
+  document.querySelectorAll('[data-edit-action]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const action = btn.dataset.editAction;
+      const ticker = btn.dataset.ticker;
+      if (!ticker) return;
+      if (action === 'remove') removeTicker(ticker);
+      else if (action === 'left') moveTicker(ticker, 'left');
+      else if (action === 'right') moveTicker(ticker, 'right');
+      renderCardsFromCustom();
+    });
+  });
+}
+
+function bindEditToolbar() {
+  const editBtn = document.getElementById('watchlist-edit-btn');
+  const addBar = document.getElementById('watchlist-add-bar');
+  const addInput = document.getElementById('watchlist-add-input');
+  const addBtn = document.getElementById('watchlist-add-btn');
+  const resetBtn = document.getElementById('watchlist-reset-btn');
+
+  const setEdit = (on) => {
+    __editMode = on;
+    if (editBtn) editBtn.innerHTML = on
+      ? '<span class="material-symbols-outlined">check</span> 完成'
+      : '<span class="material-symbols-outlined">edit</span> 编辑';
+    editBtn?.classList.toggle('is-active', on);
+    if (addBar) addBar.hidden = !on;
+    renderCardsFromCustom();
+  };
+
+  editBtn?.addEventListener('click', () => setEdit(!__editMode));
+
+  const handleAdd = () => {
+    const v = (addInput?.value || '').trim().toUpperCase();
+    if (!v) return;
+    addTicker(v);
+    addInput.value = '';
+    renderCardsFromCustom();
+    // Try fetching the new ticker's data and re-render to fill placeholder
+    api.stock(v).then(data => {
+      const existing = __watchlistState.backendStocks.find(s => s.ticker === v);
+      if (!existing && data) {
+        __watchlistState.backendStocks.push(normalizeStock({
+          ticker: v, name: data.name, price: data.price, change_percent: data.change_percent
+        }));
+        renderCardsFromCustom();
+      }
+    }).catch(() => {});
+  };
+  addBtn?.addEventListener('click', handleAdd);
+  addInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleAdd(); });
+
+  resetBtn?.addEventListener('click', () => {
+    if (!confirm('确认重置为默认自选？当前自定义将被覆盖。')) return;
+    localStorage.removeItem('optix.watchlist.custom.v1');
+    initCustomFromBackend(__watchlistState.backendStocks.map(s => ({ stocks: [s] })));
+    renderCardsFromCustom();
+  });
+}
+
 export async function renderWatchlist() {
   renderWatchlistShell(true);
   renderMarketStatus(document.getElementById('market-status-panel'));
   const grid = document.getElementById('watchlist-grid');
   const heatmap = document.getElementById('terminal-heatmap');
-  try {
-    const payload = await api.watchlist();
-    const stocks = normalizeWatchlistPayload(payload);
-    if (!stocks.length) throw new Error('Watchlist API returned no stocks');
-    grid.innerHTML = stocks.map(renderStockCard).join('');
 
-    // Build heatmap from watchlist data (no separate heatmap API)
-    const heatmapData = stocks.slice(0, 20).map(s => ({
-      ticker: s.ticker, label: s.companyName, changePercent: s.changePercent, weight: 1 + Math.abs(s.changePercent) / 2
-    }));
-    if (heatmap) heatmap.innerHTML = renderHeatmap(heatmapData);
-  } catch (error) {
-    console.warn('api.watchlist() failed; rendering fallback watchlist cards.', error);
-    grid.innerHTML = FALLBACK_WATCHLIST.map(normalizeStock).map(renderStockCard).join('');
-    if (heatmap) heatmap.innerHTML = renderHeatmap(FALLBACK_HEATMAP);
-  }
+  await fetchAndCacheBackend();
+  renderCardsFromCustom();
+  if (heatmap) heatmap.innerHTML = renderHeatmap(__watchlistState.heatmapData);
   grid.classList.remove('is-loading');
-  bindStockCardNavigation();
   bindHeatmapNavigation();
+  bindEditToolbar();
 }

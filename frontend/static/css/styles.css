@@ -29,3 +29,28 @@
 .sector-stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
 .sector-stat{display:grid;gap:6px;padding:12px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px}
 .sector-stat strong{font-size:16px;font-weight:800;letter-spacing:-.01em}
+.sector-carousel-wrap{position:relative;display:flex;align-items:center;gap:8px}
+.sector-carousel{display:flex;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-padding:8px;padding:6px 4px;flex:1;min-width:0;scrollbar-width:none;-ms-overflow-style:none}
+.sector-carousel::-webkit-scrollbar{display:none}
+.sector-carousel .sector-card{flex:0 0 240px;scroll-snap-align:start;min-height:160px}
+.sector-carousel-arrow{flex:0 0 36px;height:36px;display:grid;place-content:center;border:1px solid var(--color-border);background:#fff;border-radius:999px;cursor:pointer;color:var(--color-on-surface);transition:background .15s,border-color .15s;box-shadow:0 2px 6px rgba(0,0,0,.04)}
+.sector-carousel-arrow:hover:not(:disabled){background:#000;color:#fff;border-color:#000}
+.sector-carousel-arrow:disabled{opacity:.3;cursor:not-allowed}
+.sector-carousel-arrow .material-symbols-outlined{font-size:20px}
+.terminal-header-right{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.watchlist-edit-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--color-border);border-radius:999px;background:#fff;font-size:12px;font-weight:800;letter-spacing:.04em;cursor:pointer;color:var(--color-on-surface);transition:.15s}
+.watchlist-edit-btn:hover{border-color:#000}
+.watchlist-edit-btn.is-active{background:#000;color:#fff;border-color:#000}
+.watchlist-edit-btn .material-symbols-outlined{font-size:16px}
+.watchlist-add-bar{display:flex;gap:8px;align-items:center;padding:14px 16px;background:#fff;border:1px solid var(--color-border);border-radius:8px;margin-bottom:8px}
+.watchlist-add-bar input{flex:1;height:36px;padding:0 12px;border:1px solid var(--color-border);border-radius:6px;outline:none;font-family:"JetBrains Mono";font-size:13px}
+.watchlist-add-bar input:focus{border-color:#000;box-shadow:0 0 0 3px rgba(0,0,0,.06)}
+.watchlist-add-bar button{height:36px;padding:0 14px;border:1px solid #000;background:#000;color:#fff;border-radius:6px;font-weight:800;font-size:12px;cursor:pointer}
+.watchlist-add-bar button.watchlist-reset-btn{background:#fff;color:var(--color-on-surface);border-color:var(--color-border)}
+.watchlist-add-bar button:hover{opacity:.9}
+.stock-card--editing{position:relative;outline:1px dashed var(--color-border);outline-offset:2px;cursor:default}
+.stock-card__edit-controls{position:absolute;top:8px;right:8px;display:flex;gap:4px;z-index:2}
+.card-edit-btn{display:grid;place-content:center;width:26px;height:26px;border:1px solid var(--color-border);background:#fff;border-radius:999px;cursor:pointer;color:var(--color-on-surface);transition:.15s}
+.card-edit-btn:hover{background:#000;color:#fff;border-color:#000}
+.card-edit-btn--remove:hover{background:var(--color-crimson);border-color:var(--color-crimson)}
+.card-edit-btn .material-symbols-outlined{font-size:16px}
