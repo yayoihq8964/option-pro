@@ -15,7 +15,7 @@ export const api = {
   search(q)             { return fetchJson(`${API_BASE}/stocks/search?q=${encodeURIComponent(q)}`); },
 
   signals(ticker)       { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}`); },
-  topBottomSignals(ticker) { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}/top-bottom`); },
+  topBottomSignals(ticker) { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}`); },
   signalAI(ticker)      { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}/ai-analysis`, { method:'POST', headers:{'Content-Type':'application/json'} }); },
   analyzeTopBottomSignals(ticker) { return fetchJson(`${API_BASE}/signals/stock/${enc(ticker)}/ai-analysis`, { method:'POST', headers:{'Content-Type':'application/json'} }); },
 
