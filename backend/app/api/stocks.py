@@ -18,20 +18,37 @@ router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 # Returns stale on errors so a flaky API doesn't nuke the UI.
 # ──────────────────────────────────────────────────────────────────────────────
 _endpoint_cache: dict[str, tuple[float, Any]] = {}
+# Per-key lock prevents thundering herd: concurrent requests for the same
+# cold key would otherwise all kick off their own yfinance fetch.
+_endpoint_locks: dict[str, asyncio.Lock] = {}
+
+def _lock_for(key: str) -> asyncio.Lock:
+    lock = _endpoint_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _endpoint_locks[key] = lock
+    return lock
 
 async def _cached_endpoint(key: str, ttl: int, loader):
     now = time.time()
     hit = _endpoint_cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    try:
-        value = await loader()
-    except Exception:
-        if hit:
-            return hit[1]  # stale fallback
-        raise
-    _endpoint_cache[key] = (now + ttl, value)
-    return value
+    # Serialize cold-cache fills per key
+    async with _lock_for(key):
+        # Re-check after acquiring lock (another waiter may have filled it)
+        now = time.time()
+        hit = _endpoint_cache.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+        try:
+            value = await loader()
+        except Exception:
+            if hit:
+                return hit[1]  # stale fallback
+            raise
+        _endpoint_cache[key] = (now + ttl, value)
+        return value
 
 
 from app.services.utils import sanitize as _sanitize

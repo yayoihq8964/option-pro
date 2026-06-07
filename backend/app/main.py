@@ -118,6 +118,21 @@ async def health():
 
 
 # Docker-compose runs from /app/backend; local runs may be from repo root.
-FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+# Allow override via FRONTEND_DIR env var for unusual deployments.
+_env_dir = _os.environ.get("FRONTEND_DIR")
+if _env_dir:
+    FRONTEND_DIR = Path(_env_dir).resolve()
+else:
+    # Try a few candidate paths
+    _here = Path(__file__).resolve()
+    _candidates = [
+        _here.parents[2] / "frontend",  # /app/frontend (docker)
+        _here.parents[3] / "frontend",  # /repo/frontend (local from backend/)
+    ]
+    FRONTEND_DIR = next((c for c in _candidates if c.exists()), _candidates[0])
+
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+else:
+    import warnings
+    warnings.warn(f"FRONTEND_DIR not found at {FRONTEND_DIR}; static serving disabled")

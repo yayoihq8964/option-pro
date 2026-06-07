@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 import pandas as pd
@@ -13,7 +13,7 @@ SECTOR_ETFS = ["XLK", "XLF", "XLV", "XLE", "XLI", "XLC", "XLY", "XLP", "XLU", "X
 
 
 def _cached(key: str, ttl_seconds: int, loader: Callable[[], Any]) -> Any:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     hit = _cache.get(key)
     if hit and hit[0] > now:
         value = hit[1]

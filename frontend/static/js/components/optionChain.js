@@ -3,14 +3,32 @@ const int = (n) => n == null || Number.isNaN(Number(n)) ? '—' : Number(n).toLo
 const pct = (n) => n == null || Number.isNaN(Number(n)) ? '—' : (Number(n) * 100).toFixed(1) + '%';
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+// Pick first non-null finite number across aliased field names.
+// IMPORTANT: 0 is a VALID value (zero volume, zero OI both happen and matter).
+// Old version treated 0 as missing and fell through to next alias.
 const firstValid = (...values) => {
-  for (const v of values) { if (v != null && !Number.isNaN(Number(v)) && Number(v) !== 0) return Number(v); }
+  for (const v of values) {
+    if (v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+};
+
+// IV is special: 0 IV almost always means "data not available" (no live quotes),
+// so we keep the old skip-zero behavior here.
+const firstValidNonZero = (...values) => {
+  for (const v of values) {
+    if (v == null) continue;
+    const n = Number(v);
+    if (Number.isFinite(n) && n !== 0) return n;
+  }
   return null;
 };
 
 const optionVolume = (o = {}) => firstValid(o.volume, o.vol);
 const optionOI = (o = {}) => firstValid(o.open_interest, o.oi, o.openInterest);
-const optionIV = (o = {}) => firstValid(o.implied_volatility, o.iv);
+const optionIV = (o = {}) => firstValidNonZero(o.implied_volatility, o.iv);
 
 /** Render unusual activity alerts above the chain (Ethos style) */
 export function renderAlerts(alerts = []) {

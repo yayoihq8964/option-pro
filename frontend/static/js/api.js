@@ -5,13 +5,25 @@ const API_BASE = '/api';
 const cache = new Map();      // key → { data, ts }
 const inflight = new Map();   // key → Promise (dedup concurrent requests)
 
+// Hard cap on in-memory cache to prevent unbounded growth in long sessions.
+const CACHE_MAX = 200;
+
 function cached(key, ttl, fn) {
   const now = Date.now();
   const entry = cache.get(key);
   if (entry && now - entry.ts < ttl) return Promise.resolve(entry.data);
   if (inflight.has(key)) return inflight.get(key);
   const p = fn()
-    .then(data => { cache.set(key, { data, ts: Date.now() }); inflight.delete(key); return data; })
+    .then(data => {
+      // Simple LRU-ish: drop oldest when over cap
+      if (cache.size >= CACHE_MAX) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey) cache.delete(oldestKey);
+      }
+      cache.set(key, { data, ts: Date.now() });
+      inflight.delete(key);
+      return data;
+    })
     .catch(err => { inflight.delete(key); throw err; });
   inflight.set(key, p);
   return p;
@@ -21,10 +33,26 @@ export function invalidateCache(prefix = '') {
   for (const k of cache.keys()) if (k.startsWith(prefix)) cache.delete(k);
 }
 
+// Hard request timeout — prevents inflight Map from getting clogged with
+// dead promises if the server hangs (then subsequent same-key requests
+// would await forever).
+const REQUEST_TIMEOUT_MS = 90 * 1000;
+
 async function fetchJson(url, init) {
-  const response = await fetch(url, init);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return response.json();
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return await response.json();
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      throw new Error(`Request timeout (${REQUEST_TIMEOUT_MS / 1000}s): ${url}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(tid);
+  }
 }
 
 function enc(ticker) { return encodeURIComponent(String(ticker).toUpperCase()); }

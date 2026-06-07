@@ -1,15 +1,22 @@
 """OpenAI Response API client for AI-powered analysis (GPT-5.4-mini + web search)."""
 from __future__ import annotations
-import json, os, math
-from datetime import datetime, timedelta
+import json, os, math, re
+from datetime import datetime, timedelta, timezone
 from openai import OpenAI
 
 # Cache: key → (expires_at, result, request_fingerprint)
 # If a different fingerprint hits the same key, refresh the analysis
 _cache: dict[str, tuple[datetime, dict, str]] = {}
 
+# Module-level OpenAI client singleton (httpx connection pool reuse).
+# Lazy-initialized so import-time doesn't crash when env vars unset (tests).
+_client_singleton: OpenAI | None = None
+
 
 def _get_client() -> OpenAI:
+    global _client_singleton
+    if _client_singleton is not None:
+        return _client_singleton
     key = os.environ.get("OPENAI_API_KEY", "")
     base = os.environ.get("OPENAI_BASE_URL", "")
     if not key:
@@ -17,7 +24,8 @@ def _get_client() -> OpenAI:
     kwargs = {"api_key": key}
     if base:
         kwargs["base_url"] = base
-    return OpenAI(**kwargs)
+    _client_singleton = OpenAI(**kwargs)
+    return _client_singleton
 
 
 def _ask(prompt: str, use_web_search: bool = False) -> str:
@@ -41,9 +49,14 @@ def _ask(prompt: str, use_web_search: bool = False) -> str:
 
 
 def _parse_json(raw: str) -> dict:
+    """Strip optional ```json / ``` code fences then parse.
+    Robust against LLM variations: bare, ```json…```, ```…```, with/without newlines.
+    """
     text = raw.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    # Strip opening fence: ```[lang]\n
+    text = re.sub(r"^```(?:json|JSON)?\s*\n?", "", text)
+    # Strip trailing fence: ```
+    text = re.sub(r"\n?```\s*$", "", text).strip()
     return json.loads(text)
 
 
@@ -60,7 +73,7 @@ def _sanitize_ai(obj):
 def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: float, expiration: str, fingerprint: str = "") -> dict:
     cache_key = f"alerts:{ticker}:{expiration}"
     cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.utcnow():
+    if cached and cached[0] > datetime.now(timezone.utc):
         # Same person → return cache. Different person → refresh.
         if not fingerprint or cached[2] == fingerprint:
             return {**cached[1], "_cached": True}
@@ -88,7 +101,7 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
     try:
         raw = _ask(prompt, use_web_search=False)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
+        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {"analysis": f"AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}
@@ -175,12 +188,12 @@ def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str =
     symbol = ticker.upper()
     cache_key = f"signals:{symbol}"
     cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.utcnow():
+    if cached and cached[0] > datetime.now(timezone.utc):
         if not fingerprint or cached[2] == fingerprint:
             return {**cached[1], "_cached": True}
 
     data = {
-        "as_of": datetime.utcnow().date().isoformat(),
+        "as_of": datetime.now(timezone.utc).date().isoformat(),
         "asset": {"symbol": symbol, "type": "stock", "timeframe": "swing_5_20d"},
         "raw_scores": {
             "top_score": scores.get("top_score"),
@@ -214,7 +227,7 @@ def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str =
         result.setdefault("data_quality", scores.get("data_quality"))
         result.setdefault("dip_buy_quality", scores.get("dip_buy_quality"))
         result.setdefault("options_flow_read", {"net_direction": "unknown", "confidence": 0, "bullish_flow_evidence": [], "bearish_flow_evidence": [], "unknown_or_neutral_flow": [], "warnings": ["未提供期权流结构化数据"]})
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
+        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {
@@ -247,7 +260,7 @@ def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str =
 def analyze_earnings_correlation(earnings: list[dict], fingerprint: str = "") -> dict:
     cache_key = "earnings_correlation"
     cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.utcnow():
+    if cached and cached[0] > datetime.now(timezone.utc):
         if not fingerprint or cached[2] == fingerprint:
             return {**cached[1], "_cached": True}
 
@@ -273,7 +286,7 @@ def analyze_earnings_correlation(earnings: list[dict], fingerprint: str = "") ->
     try:
         raw = _ask(prompt, use_web_search=True)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
+        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {"summary": f"AI分析暂时不可用", "correlations": [], "error": str(e)[:120]}
@@ -287,7 +300,7 @@ def analyze_single_earnings_impact(earning: dict, fingerprint: str = "") -> dict
 
     cache_key = f"earnings_impact:{ticker}"
     cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.utcnow():
+    if cached and cached[0] > datetime.now(timezone.utc):
         if not fingerprint or cached[2] == fingerprint:
             return {**cached[1], "_cached": True}
 
@@ -353,7 +366,7 @@ def analyze_single_earnings_impact(earning: dict, fingerprint: str = "") -> dict
         if not isinstance(result.get("impacted"), list):
             result["impacted"] = []
         result["ticker"] = ticker
-        _cache[cache_key] = (datetime.utcnow() + timedelta(hours=24), result, fingerprint)
+        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {

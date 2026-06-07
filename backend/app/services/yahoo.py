@@ -1,21 +1,42 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 from typing import Any
 
+import logging
+import warnings as _warnings
 import yfinance as yf
+
+_log = logging.getLogger(__name__)
 
 # Use curl_cffi browser-impersonation session to dodge Yahoo's rate limits.
 # Falls back to default session if curl_cffi isn't available.
 try:
     from curl_cffi import requests as _cffi_requests
     _yf_session = _cffi_requests.Session(impersonate="chrome")
-except Exception:
+except Exception as _e:
     _yf_session = None
+    _log.warning("curl_cffi unavailable, yfinance will use default session: %s", _e)
 
-# Monkey-patch yf.Ticker so ALL call sites (stocks.py, signals.py, earnings.py,
-# sectors.py, etc.) automatically get our impersonating session.
+# Monkey-patch yf.Ticker so ALL call sites get our impersonating session.
+# Verify the patched __init__ signature still matches what yfinance expects;
+# if upstream changes the signature, we'd silently break — bail loudly instead.
+if _yf_session is not None:
+    import inspect as _inspect
+    try:
+        _sig = _inspect.signature(yf.Ticker.__init__)
+        _params = list(_sig.parameters.keys())
+        # Expect at least (self, ticker, session=...) — bail if shape changed
+        if "session" not in _params:
+            _warnings.warn(
+                f"yfinance {yf.__version__} Ticker.__init__ no longer accepts 'session' "
+                "kwarg; skipping monkey-patch. Update yahoo.py for new API."
+            )
+            _yf_session = None
+    except Exception:
+        pass  # if we can't introspect, try the patch anyway
+
 if _yf_session is not None:
     _orig_init = yf.Ticker.__init__
     def _patched_init(self, ticker, session=None, **kwargs):
@@ -29,7 +50,7 @@ _cache: dict[str, tuple[datetime, Any]] = {}
 
 
 def _cached(key: str, ttl_seconds: int, loader):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
@@ -76,13 +97,16 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
         T = max(dte, 1) / 365.0
 
         def _resolve_iv(row, strike, last_price, stock_price, is_call=True):
-            """Use yfinance IV if meaningful, else compute from last_price via BS."""
+            """Use yfinance IV if meaningful, else compute from last_price via BS.
+            Threshold rationale: a truly traded option has IV >= 0.5% always.
+            0.0001/0/NaN means yfinance returned no quote (after-hours, etc).
+            """
             iv = _safe_float(row.get("impliedVolatility"))
-            if iv is not None and iv > 0.05:
+            if iv is not None and iv > 0.005:
                 return iv
             if last_price and last_price > 0.01 and stock_price and stock_price > 0:
                 computed = compute_iv(last_price, stock_price, strike, T, r=0.05, is_call=is_call)
-                if computed and 0.05 < computed < 3.0:
+                if computed and 0.01 < computed < 3.0:
                     return computed
             return iv  # return raw even if low
 
@@ -254,16 +278,25 @@ def get_stock_iv(ticker: str) -> float | None:
             # expiration around one month out for sector/stock displays.
             target_exp = None
             today = datetime.now().date()
+
+            def _parse_exp(s):
+                try:
+                    return datetime.strptime(s, "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    return None
+
             for exp in exps:
-                exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
+                exp_date = _parse_exp(exp)
+                if not exp_date:
+                    continue
                 days_out = (exp_date - today).days
                 if 20 <= days_out <= 60:
                     target_exp = exp
                     break
             if not target_exp:
                 for exp in exps:
-                    exp_date = datetime.strptime(exp, "%Y-%m-%d").date()
-                    if (exp_date - today).days > 7:
+                    exp_date = _parse_exp(exp)
+                    if exp_date and (exp_date - today).days > 7:
                         target_exp = exp
                         break
             if not target_exp and exps:
@@ -280,7 +313,9 @@ def get_stock_iv(ticker: str) -> float | None:
                     return round(iv, 4)
 
             # 2) Fallback: compute IV from last_price via Black-Scholes
-            exp_date = datetime.strptime(target_exp, "%Y-%m-%d").date()
+            exp_date = _parse_exp(target_exp)
+            if not exp_date:
+                return None
             T = max((exp_date - today).days, 1) / 365.0
             for _, row in atm_calls.iterrows():
                 last = _safe_float(row.get("lastPrice"))
@@ -344,36 +379,60 @@ def _bs_call(S, K, T, r, sigma):
     d2 = d1 - sigma * sqrt(T)
     return S * _norm_cdf(d1) - K * exp(-r * T) * _norm_cdf(d2)
 
+def _bs_price(S, K, T, r, sigma, is_call):
+    call = _bs_call(S, K, T, r, sigma)
+    return call if is_call else call - S + K * exp(-r * T)
+
+
 def compute_iv(option_price, S, K, T, r=0.05, is_call=True):
-    """Newton's method to solve for implied volatility from option price."""
+    """Solve IV via Newton's method; fall back to bisection if Newton fails to converge.
+
+    Newton can diverge for deep OTM / near-expiry options where vega → 0.
+    Bisection is slower but guaranteed to converge in a bounded sigma range.
+    """
     if option_price <= 0 or S <= 0 or K <= 0 or T <= 0:
         return None
-    # Intrinsic value check
     intrinsic = max(S - K, 0) if is_call else max(K - S, 0)
     if option_price < intrinsic * 0.9:
         return None
 
-    sigma = 0.3  # initial guess
+    # ── Newton's method (fast path) ──
+    sigma = 0.3
     for _ in range(50):
-        if is_call:
-            bs = _bs_call(S, K, T, r, sigma)
-        else:
-            bs = _bs_call(S, K, T, r, sigma) - S + K * exp(-r * T)
-
-        d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrt(T))
-        vega = S * sqrt(T) * _norm_pdf(d1)
-
-        if abs(vega) < 1e-12:
+        bs = _bs_price(S, K, T, r, sigma, is_call)
+        try:
+            d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrt(T))
+            vega = S * sqrt(T) * _norm_pdf(d1)
+        except (ValueError, ZeroDivisionError):
             break
-        sigma -= (bs - option_price) / vega
-        if sigma <= 0.001:
-            sigma = 0.001
-        if sigma > 5.0:
-            return None
+        if abs(vega) < 1e-8:
+            break  # Newton stuck; try bisection
+        step = (bs - option_price) / vega
+        sigma -= step
+        if sigma <= 0.001 or sigma > 5.0:
+            break  # diverged; try bisection
         if abs(bs - option_price) < 0.001:
-            break
+            return round(sigma, 4)
 
-    return round(sigma, 4) if 0.001 < sigma < 5.0 else None
+    # ── Bisection fallback (guaranteed convergence in [lo, hi]) ──
+    lo, hi = 0.001, 5.0
+    try:
+        f_lo = _bs_price(S, K, T, r, lo, is_call) - option_price
+        f_hi = _bs_price(S, K, T, r, hi, is_call) - option_price
+    except Exception:
+        return None
+    if f_lo * f_hi > 0:
+        return None  # no root in bracket
+    for _ in range(60):  # log2(5/0.001) ≈ 12 needed for 0.001 precision
+        mid = (lo + hi) / 2
+        f_mid = _bs_price(S, K, T, r, mid, is_call) - option_price
+        if abs(f_mid) < 0.001:
+            return round(mid, 4)
+        if f_lo * f_mid < 0:
+            hi, f_hi = mid, f_mid
+        else:
+            lo, f_lo = mid, f_mid
+    return round((lo + hi) / 2, 4)
 
 
 def compute_greeks(S, K, T, r, sigma, is_call=True):
