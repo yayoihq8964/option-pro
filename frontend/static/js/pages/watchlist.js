@@ -167,8 +167,8 @@ function renderWatchlistShell(isLoading = false) {
       <header class="terminal-header">
         <div>
           <span class="label-caps">自选</span>
-          <h1 id="terminal-title">智能终端</h1>
-          <p>专有信号、价格行为与短周期波动模型汇聚于一个 Intelligence Terminal，帮助分析师快速识别机会与风险。</p>
+          <h1 id="terminal-title">Intelligence Terminal</h1>
+          <p>信号分析与波动率监控</p>
         </div>
         <div class="terminal-status panel">
           <span class="label-caps">市场状态</span>

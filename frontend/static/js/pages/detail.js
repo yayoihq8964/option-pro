@@ -1,298 +1,146 @@
-import { api } from '../api.js';
+import { api, safe } from '../api.js';
 import { renderChart } from '../components/chart.js';
 import { mountOptionChain } from '../components/optionChain.js';
-import { renderSignalPanels } from '../components/signals.js';
-import { mountTopBottomAnalysis } from '../components/aiAnalysis.js';
 
-const EXCHANGE_BY_TICKER = {
-  AAPL: 'NASDAQ', MSFT: 'NASDAQ', GOOGL: 'NASDAQ', GOOG: 'NASDAQ', AMZN: 'NASDAQ', META: 'NASDAQ', NVDA: 'NASDAQ', AMD: 'NASDAQ', TSLA: 'NASDAQ', NFLX: 'NASDAQ', QQQ: 'NASDAQ',
-  JPM: 'NYSE', SPY: 'NYSE', XOM: 'NYSE', CVX: 'NYSE', WMT: 'NYSE', COST: 'NASDAQ'
-};
+const EXCHANGE_BY_TICKER = { AAPL:'NASDAQ', MSFT:'NASDAQ', GOOGL:'NASDAQ', GOOG:'NASDAQ', AMZN:'NASDAQ', META:'NASDAQ', NVDA:'NASDAQ', AMD:'NASDAQ', TSLA:'NASDAQ', NFLX:'NASDAQ', QQQ:'NASDAQ', JPM:'NYSE', SPY:'NYSE', XOM:'NYSE' };
+const COMPANY_BY_TICKER = { AAPL:'Apple Inc.', MSFT:'Microsoft Corp.', GOOGL:'Alphabet Inc.', GOOG:'Alphabet Inc.', AMZN:'Amazon.com Inc.', META:'Meta Platforms', NVDA:'NVIDIA Corp.', AMD:'Advanced Micro Devices', TSLA:'Tesla Inc.', NFLX:'Netflix Inc.', JPM:'JPMorgan Chase', SPY:'SPDR S&P 500 ETF', QQQ:'Invesco QQQ Trust' };
+const SECTOR_BY_TICKER = { AAPL:'TECH', MSFT:'TECH', GOOGL:'TECH', GOOG:'TECH', META:'TECH', AMZN:'TECH', NFLX:'TECH', NVDA:'SEMICONDUCTORS', AMD:'SEMICONDUCTORS', TSLA:'AUTO', JPM:'BANKS', SPY:'ETF', QQQ:'ETF' };
+const TIMEFRAMES = [ ['5m','5分'], ['15m','15分'], ['1h','1时'], ['1d','日K'], ['1w','周K'] ];
 
-const COMPANY_BY_TICKER = {
-  AAPL: 'Apple Inc.', MSFT: 'Microsoft Corp.', GOOGL: 'Alphabet Inc.', GOOG: 'Alphabet Inc.', AMZN: 'Amazon.com Inc.', META: 'Meta Platforms',
-  NVDA: 'NVIDIA Corp.', AMD: 'Advanced Micro Devices', TSLA: 'Tesla Inc.', NFLX: 'Netflix Inc.', JPM: 'JPMorgan Chase', SPY: 'SPDR S&P 500 ETF', QQQ: 'Invesco QQQ Trust'
-};
-
-const SECTOR_BY_TICKER = {
-  AAPL: 'TECH', MSFT: 'TECH', GOOGL: 'TECH', GOOG: 'TECH', META: 'TECH', AMZN: 'TECH', NFLX: 'TECH', NVDA: 'SEMIS', AMD: 'SEMIS', TSLA: 'AUTO', JPM: 'BANKS', SPY: 'ETF', QQQ: 'ETF'
-};
-
-function escapeHtml(value = '') {
-  return String(value).replace(/[&<>'"]/g, (character) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  })[character]);
-}
-
-function formatPrice(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '—';
-  return `$${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatChange(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '—';
-  const sign = number > 0 ? '+' : '';
-  return `${sign}${number.toFixed(2)}%`;
-}
+function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[c]); }
+function fmtPrice(value) { const n = Number(value); return Number.isFinite(n) ? `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'; }
+function fmtPct(value) { const n = Number(value); return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n.toFixed(2)}%` : '—'; }
+function first(source, keys, fallback = '—') { for (const k of keys) if (source?.[k] !== undefined && source?.[k] !== null && source?.[k] !== '') return source[k]; return fallback; }
+function num(source, keys, fallback = 0) { for (const k of keys) { const n = Number(source?.[k]); if (Number.isFinite(n)) return n; } return fallback; }
 
 function normalizeStock(payload, ticker) {
   const source = payload?.stock ?? payload?.data ?? payload ?? {};
   const symbol = String(source.ticker ?? source.symbol ?? ticker).toUpperCase();
-  const price = Number(source.price ?? source.last ?? source.lastPrice ?? source.close ?? source.regularMarketPrice);
   const rawChange = source.changePercent ?? source.change_percentage ?? source.changePct ?? source.percentChange ?? source.regularMarketChangePercent ?? source.change;
-  const changePercent = Number(rawChange);
+  const change = Number(rawChange);
   const sector = source.sector ?? source.industry ?? SECTOR_BY_TICKER[symbol] ?? 'EQUITY';
   return {
     ticker: symbol,
-    exchange: source.exchange ?? source.market ?? EXCHANGE_BY_TICKER[symbol] ?? 'US',
-    companyName: source.companyName ?? source.company_name ?? source.name ?? source.company ?? COMPANY_BY_TICKER[symbol] ?? `${symbol} Holdings`,
-    sectorTags: [sector, source.assetClass ?? source.asset_class ?? 'OPTIONS'].filter(Boolean).map((tag) => String(tag).toUpperCase()),
-    price,
-    changePercent: Number.isFinite(changePercent) ? (Math.abs(changePercent) > 50 && Math.abs(changePercent) < 1000 ? changePercent / 100 : changePercent) : 0
+    exchange: source.exchange ?? source.market ?? EXCHANGE_BY_TICKER[symbol] ?? 'NASDAQ',
+    name: source.companyName ?? source.company_name ?? source.name ?? source.company ?? COMPANY_BY_TICKER[symbol] ?? `${symbol} Corp.`,
+    sector,
+    price: Number(source.price ?? source.last ?? source.lastPrice ?? source.close ?? source.regularMarketPrice),
+    change: Number.isFinite(change) ? (Math.abs(change) > 50 && Math.abs(change) < 1000 ? change / 100 : change) : 0
   };
 }
 
-function numberFrom(source, keys, fallback = null) {
-  for (const key of keys) {
-    const value = Number(source?.[key]);
-    if (Number.isFinite(value)) return value;
-  }
-  return fallback;
-}
-
-function normalizeTopBottomSignals(payload = {}, signalsPayload = {}) {
+function normalizeTopBottom(payload = {}, signalsPayload = {}) {
   const source = payload?.topBottomSignals ?? payload?.signals ?? payload?.data ?? payload ?? {};
-  const signalSource = signalsPayload?.data ?? signalsPayload?.signals ?? signalsPayload ?? {};
+  const sig = signalsPayload?.data ?? signalsPayload?.signals ?? signalsPayload ?? {};
   const bottom = source.bottom ?? source.bottomSignal ?? {};
   const top = source.top ?? source.topSignal ?? {};
-
-  const bottomScore = Math.max(0, Math.min(100, numberFrom(bottom, ['score', 'confidence', 'bottomScore', 'bottom_score'], numberFrom(source, ['bottomScore', 'bottom_score', 'bullishScore', 'supportScore'], 34))));
-  const topScore = Math.max(0, Math.min(100, numberFrom(top, ['score', 'confidence', 'topScore', 'top_score'], numberFrom(source, ['topScore', 'top_score', 'bearishScore', 'riskScore', 'resistanceScore'], 66))));
-
   return {
     bottom: {
-      title: bottom.title ?? bottom.label ?? source.bottomLabel ?? 'Potential Bottom Setup',
-      score: bottomScore,
-      metrics: [
-        ['Support', bottom.support ?? source.support ?? signalSource.support ?? 'Near demand zone'],
-        ['Momentum', bottom.momentum ?? source.bottomMomentum ?? signalSource.momentum ?? 'Stabilizing'],
-        ['Flow', bottom.flow ?? source.callFlow ?? signalSource.callFlow ?? 'Call-side interest']
-      ],
-      summary: bottom.summary ?? source.bottomSummary ?? signalSource.bottomSummary ?? 'Downside exhaustion and support behavior are monitored for a possible rebound window.'
+      score: Math.max(0, Math.min(100, num(bottom, ['score','confidence','bottomScore','bottom_score'], num(source, ['bottomScore','bottom_score','bullishScore','supportScore'], 34)))),
+      factors: [
+        ['支撑区间', first(bottom, ['support','supportZone','support_zone'], first(source, ['support','supportZone'], first(sig, ['support'], '接近需求支撑区'))],
+        ['成交量 / 资金流', first(bottom, ['volume','flow','volumeProfile'], first(source, ['volumeProfile','callFlow'], '量能开始企稳'))],
+        ['智能摘要', first(bottom, ['summary','thesis'], first(source, ['bottomSummary'], '下行动能衰竭与支撑行为构成潜在反弹窗口'))]
+      ]
     },
     top: {
-      title: top.title ?? top.label ?? source.topLabel ?? 'Potential Top Risk',
-      score: topScore,
-      metrics: [
-        ['Resistance', top.resistance ?? source.resistance ?? signalSource.resistance ?? 'Supply overhead'],
-        ['Momentum', top.momentum ?? source.topMomentum ?? signalSource.momentum ?? 'Extension risk'],
-        ['Flow', top.flow ?? source.putFlow ?? signalSource.putFlow ?? 'Put-side hedge watch']
-      ],
-      summary: top.summary ?? source.topSummary ?? signalSource.topSummary ?? 'Upside extension, resistance and bearish option flow are monitored for reversal risk.'
+      score: Math.max(0, Math.min(100, num(top, ['score','confidence','topScore','top_score'], num(source, ['topScore','top_score','bearishScore','riskScore'], 66)))),
+      factors: [
+        ['阻力区间', first(top, ['resistance','resistanceZone','resistance_zone'], first(source, ['resistance','resistanceZone'], '上方供给区仍需确认'))],
+        ['IV / OI 数据', first(top, ['iv','openInterest','flow'], first(source, ['iv','openInterest'], '隐含波动率与持仓集中度偏高'))],
+        ['风险文本', first(top, ['risk','summary','riskAssessment'], first(source, ['topSummary'], '突破失败后可能触发对冲需求与回撤风险'))]
+      ]
     }
   };
 }
 
-function normalizeExpirations(payload) {
-  const expirations = Array.isArray(payload) ? payload : (payload?.expirations ?? payload?.data ?? payload?.dates ?? []);
-  return expirations.map((item) => typeof item === 'string' ? item : (item.date ?? item.expiration ?? item.expiry)).filter(Boolean).slice(0, 6);
+function normalizeSignals(payload = {}) {
+  const s = payload?.signals ?? payload?.data ?? payload ?? {};
+  const items = [
+    ['RSI', first(s, ['rsi','RSI'], 54.2)], ['MACD', first(s, ['macd','MACD'], 'Neutral')], ['SMA', first(s, ['sma','sma50','SMA'], 'Above')],
+    ['ATR', first(s, ['atr','ATR'], 2.18)], ['Vol', first(s, ['volume','vol','relativeVolume'], '1.2x')], ['RelStr', first(s, ['relativeStrength','relStr'], 'Firm')], ['IV', first(s, ['iv','impliedVolatility','ivRank'], 42.1)]
+  ];
+  return items;
 }
 
-function renderHeader(stock) {
-  const isPositive = stock.changePercent >= 0;
-  const toneClass = isPositive ? 'positive' : 'negative';
-  return `
-    <section class="detail-header-card panel" aria-label="${escapeHtml(stock.ticker)} summary">
-      <div class="detail-logo" aria-hidden="true">${escapeHtml(stock.ticker[0] ?? '•')}</div>
-      <div class="detail-identity">
-        <span class="label-caps">${escapeHtml(stock.exchange)}</span>
-        <h1>${escapeHtml(stock.companyName)}</h1>
-        <div class="detail-meta">
-          <strong class="mono font-data-mono" data-numeric>${escapeHtml(stock.ticker)}</strong>
-          ${stock.sectorTags.map((tag) => `<span class="sector-tag label-caps">${escapeHtml(tag)}</span>`).join('')}
-        </div>
-      </div>
-      <div class="detail-market-price">
-        <span class="detail-price mono font-data-mono" data-numeric>${formatPrice(stock.price)}</span>
-        <span class="detail-change mono font-data-mono ${toneClass}" data-numeric>${formatChange(stock.changePercent)}</span>
-      </div>
-    </section>
-  `;
-}
+function normalizeExpirations(payload) { return (Array.isArray(payload) ? payload : (payload?.expirations ?? payload?.data ?? payload?.dates ?? [])).map((x) => typeof x === 'string' ? x : (x.date ?? x.expiration ?? x.expiry)).filter(Boolean).slice(0, 8); }
 
 function renderSignalPanel(kind, signal) {
   const isBottom = kind === 'bottom';
-  const heading = isBottom ? 'BOTTOM SIGNAL ANALYSIS' : 'TOP SIGNAL ANALYSIS';
-  const tone = isBottom ? 'bottom' : 'top';
-  return `
-    <section class="ethos-signal-panel ethos-signal-panel--${tone}" aria-labelledby="${tone}-signal-title">
-      <header class="signal-panel-header">
-        <span class="signal-theme-dot" aria-hidden="true"></span>
-        <div>
-          <span class="label-caps">${heading}</span>
-          <h3 id="${tone}-signal-title">${escapeHtml(signal.title)}</h3>
-        </div>
-        <strong class="signal-score mono font-data-mono" data-numeric>${signal.score.toFixed(0)}</strong>
-      </header>
-      <div class="signal-metric-list">
-        ${signal.metrics.map(([label, value]) => `
-          <div class="signal-metric-row">
-            <span class="label-caps">${escapeHtml(label)}</span>
-            <strong>${escapeHtml(value)}</strong>
-          </div>
-        `).join('')}
-      </div>
-      <p class="signal-intelligence-copy">${escapeHtml(signal.summary)}</p>
-    </section>
-  `;
+  return `<section class="detail-signal-panel detail-signal-panel--${kind}">
+    <header><span class="signal-theme-dot"></span><span class="label-caps">${isBottom ? '底部信号分析' : '顶部信号分析'}</span><strong class="mono" data-numeric>${signal.score.toFixed(0)}</strong></header>
+    <div class="signal-score-bar"><span style="width:${signal.score}%"></span></div>
+    <div class="signal-metric-list">${signal.factors.map(([l,v]) => `<div class="signal-metric-row"><span class="label-caps">${escapeHtml(l)}</span><strong>${escapeHtml(v)}</strong></div>`).join('')}</div>
+  </section>`;
 }
 
-function renderExpirations(expirations) {
-  if (!expirations.length) return '<p class="detail-muted">期权到期日将在下一阶段接入。</p>';
-  return `<div class="expiration-list">${expirations.map((date) => `<span class="mono font-data-mono">${escapeHtml(date)}</span>`).join('')}</div>`;
+function renderTechnicalSignals(items) {
+  return `<section class="technical-signals-card"><div class="section-card-heading"><span class="label-caps">Technical Signals</span><h2>技术信号</h2></div><div class="technical-signal-grid">${items.map(([l,v]) => `<article class="technical-signal-mini"><span class="label-caps">${escapeHtml(l)}</span><strong class="mono" data-numeric>${escapeHtml(v)}</strong></article>`).join('')}</div></section>`;
 }
 
-function renderSkeleton(ticker) {
-  const app = document.getElementById('app');
-  if (!app) return;
-  app.innerHTML = `
-    <section class="detail-page" aria-labelledby="detail-title">
-      <nav class="detail-breadcrumb" aria-label="Breadcrumb">
-        <a href="#watchlist" data-back-breadcrumb>← 返回终端</a>
-        <span class="mono font-data-mono">/ ${escapeHtml(ticker)}</span>
-      </nav>
-      <div class="panel detail-loading">Loading ${escapeHtml(ticker)} market detail…</div>
-    </section>
-  `;
-}
-
-function renderError(ticker, error) {
-  const app = document.getElementById('app');
-  if (!app) return;
-  app.innerHTML = `
-    <section class="detail-page" aria-labelledby="detail-title">
-      <nav class="detail-breadcrumb" aria-label="Breadcrumb">
-        <a href="#watchlist" data-back-breadcrumb>← 返回终端</a>
-        <span class="mono font-data-mono">/ ${escapeHtml(ticker)}</span>
-      </nav>
-      <section class="panel detail-error">
-        <span class="label-caps">Detail Load Error</span>
-        <h1 id="detail-title">${escapeHtml(ticker)}</h1>
-        <p>${escapeHtml(error?.message ?? 'Unable to load detail data.')}</p>
+function renderPage(stock, topBottom, signals) {
+  const positive = stock.change >= 0;
+  return `<section class="detail-page" aria-labelledby="detail-title">
+    <nav class="detail-breadcrumb" aria-label="Breadcrumb"><a href="#watchlist" data-back-breadcrumb>← 返回终端</a><span class="mono">/ ${escapeHtml(stock.ticker)}:${escapeHtml(stock.exchange)}</span></nav>
+    <div class="detail-hero-grid">
+      <section class="detail-primary-card panel">
+        <header class="detail-stock-header"><div class="detail-logo">${escapeHtml(stock.ticker[0])}</div><div><h1 id="detail-title">${escapeHtml(stock.name)} <span>${escapeHtml(stock.ticker)}</span></h1><p>${escapeHtml(stock.sector)} • Tech</p></div><div class="detail-market-price"><strong class="mono">${fmtPrice(stock.price)}</strong><span class="mono ${positive ? 'up' : 'down'}">${fmtPct(stock.change)}</span></div></header>
+        <div id="detail-chart-tabs" class="ethos-timeframe-row">${TIMEFRAMES.map(([r,l], i) => `<button class="ethos-timeframe-button ${i===3?'active':''}" type="button" data-range="${r}">${l}</button>`).join('')}</div>
+        <div id="detail-tradingview-chart" class="detail-chart-box" data-detail-chart></div>
       </section>
-    </section>
-  `;
+      <aside class="detail-signal-column">${renderSignalPanel('bottom', topBottom.bottom)}${renderSignalPanel('top', topBottom.top)}</aside>
+    </div>
+    ${renderTechnicalSignals(signals)}
+    <section class="ai-analysis-panel panel detail-ai-card"><div class="ai-analysis-copy"><span class="label-caps">AI Analysis</span><h3>智能信号解读</h3><p>使用当前价格、技术信号与顶部/底部模型生成简洁分析。</p></div><button class="ai-analysis-button" type="button" data-ai-detail>运行 AI 分析</button><div class="ai-analysis-results" data-ai-detail-results></div></section>
+    <div id="detail-option-chain" class="detail-option-chain-slot"></div>
+  </section>`;
 }
 
-function bindBackBreadcrumb() {
-  document.querySelectorAll('[data-back-breadcrumb]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-      window.location.hash = '#watchlist';
-    });
-  });
-}
+function bindBack() { document.querySelectorAll('[data-back-breadcrumb]').forEach((el) => el.addEventListener('click', (e) => { e.preventDefault(); location.hash = '#watchlist'; })); }
+function renderLoading(ticker) { document.getElementById('app').innerHTML = `<section class="detail-page"><nav class="detail-breadcrumb"><a href="#watchlist" data-back-breadcrumb>← 返回终端</a><span class="mono">/ ${escapeHtml(ticker)}</span></nav><div class="panel detail-loading">正在加载 ${escapeHtml(ticker)} 详情…</div></section>`; bindBack(); }
 
 export async function mountDetail(tickerFromRoute) {
   const ticker = String(tickerFromRoute || '').trim().toUpperCase();
-  if (!ticker) {
-    window.location.hash = '#watchlist';
-    return;
+  if (!ticker) { location.hash = '#watchlist'; return; }
+  renderLoading(ticker);
+
+  const [stockPayload, signalsPayload, topBottomPayload, expirationsPayload] = await Promise.all([
+    safe(api.stock(ticker)), safe(api.signals(ticker)), safe(api.topBottomSignals(ticker)), safe(api.expirations(ticker))
+  ]);
+  const stock = normalizeStock(stockPayload.__error ? {} : stockPayload, ticker);
+  const topBottom = normalizeTopBottom(topBottomPayload.__error ? {} : topBottomPayload, signalsPayload.__error ? {} : signalsPayload);
+  const signals = normalizeSignals(signalsPayload.__error ? {} : signalsPayload);
+  const expirations = expirationsPayload.__error ? [] : normalizeExpirations(expirationsPayload);
+
+  const app = document.getElementById('app');
+  app.innerHTML = renderPage(stock, topBottom, signals);
+  bindBack();
+
+  const chartEl = document.getElementById('detail-tradingview-chart');
+  let refreshTimer;
+  async function loadChart(range = '1d') {
+    const chartData = await safe(api.chart(stock.ticker, range));
+    await renderChart(chartEl, stock.ticker, range, chartData.__error ? null : chartData);
+    document.querySelectorAll('#detail-chart-tabs .ethos-timeframe-button').forEach((b) => b.classList.toggle('active', b.dataset.range === range));
   }
+  document.querySelectorAll('#detail-chart-tabs .ethos-timeframe-button').forEach((b) => b.addEventListener('click', () => loadChart(b.dataset.range)));
+  await loadChart('1d');
+  refreshTimer = setInterval(() => loadChart(document.querySelector('#detail-chart-tabs .ethos-timeframe-button.active')?.dataset.range || '1d'), 30 * 60 * 1000);
+  window.addEventListener('hashchange', () => clearInterval(refreshTimer), { once: true });
 
-  renderSkeleton(ticker);
-  bindBackBreadcrumb();
+  const aiButton = document.querySelector('[data-ai-detail]');
+  const aiOut = document.querySelector('[data-ai-detail-results]');
+  aiButton?.addEventListener('click', async () => {
+    const old = aiButton.textContent; aiButton.disabled = true; aiButton.textContent = '分析中…'; aiOut.innerHTML = '<article class="ai-result-card">正在读取信号上下文…</article>';
+    const result = await safe(api.signalAI ? api.signalAI(stock.ticker) : api.analyzeAlerts(stock.ticker, []));
+    const source = result.__error ? { summary: result.message } : (result.analysis ?? result.data ?? result);
+    const summary = typeof source === 'string' ? source : (source.summary ?? source.text ?? source.analysis ?? 'AI 分析完成。');
+    aiOut.innerHTML = `<article class="ai-result-card"><div class="ai-result-card__header"><span class="label-caps">AI 分析</span><strong>${escapeHtml(stock.ticker)} 信号摘要</strong></div><p>${escapeHtml(summary)}</p></article>`;
+    aiButton.disabled = false; aiButton.textContent = old;
+  });
 
-  try {
-    const [stockResult, chartResult, signalsResult, topBottomSignalsResult, expirationsResult] = await Promise.allSettled([
-      api.stock(ticker),
-      api.chart(ticker, '1d'),
-      api.signals(ticker),
-      api.topBottomSignals(ticker),
-      api.expirations(ticker)
-    ]);
-
-    if (stockResult.status === 'rejected') {
-      console.warn(`api.stock(${ticker}) failed; rendering route with ticker fallback.`, stockResult.reason);
-    }
-
-    const stock = normalizeStock(stockResult.status === 'fulfilled' ? stockResult.value : {}, ticker);
-    const chartPayload = chartResult.status === 'fulfilled' ? chartResult.value : null;
-    const signalsPayload = signalsResult.status === 'fulfilled' ? signalsResult.value : {};
-    const topBottomPayload = topBottomSignalsResult.status === 'fulfilled' ? topBottomSignalsResult.value : {};
-    const topBottom = normalizeTopBottomSignals(topBottomPayload, signalsPayload);
-    const expirations = expirationsResult.status === 'fulfilled' ? normalizeExpirations(expirationsResult.value) : [];
-
-    const app = document.getElementById('app');
-    if (!app) return;
-    app.innerHTML = `
-      <section class="detail-page" aria-labelledby="detail-title">
-        <nav class="detail-breadcrumb" aria-label="Breadcrumb">
-          <a href="#watchlist" data-back-breadcrumb>← 返回终端</a>
-          <span class="mono font-data-mono">/ ${escapeHtml(stock.ticker)}</span>
-        </nav>
-
-        <div class="detail-grid detail-grid--12">
-          <div class="detail-main-column">
-            ${renderHeader(stock)}
-            <section class="detail-chart-card panel" aria-labelledby="detail-title">
-              <div class="detail-section-heading">
-                <div>
-                  <span class="label-caps">PRICE ACTION</span>
-                  <h2 id="detail-title">${escapeHtml(stock.ticker)} Chart</h2>
-                </div>
-              </div>
-              <div id="detail-tradingview-chart" data-detail-chart></div>
-            </section>
-          </div>
-
-          <aside class="detail-signals-card" aria-label="Signal analysis">
-            ${renderSignalPanel('bottom', topBottom.bottom)}
-            ${renderSignalPanel('top', topBottom.top)}
-            <div id="detail-ai-analysis" class="detail-ai-analysis-slot"></div>
-          </aside>
-
-          <section class="detail-bottom-section panel" aria-label="Option chain and technical signals">
-            <div class="detail-section-heading">
-              <div>
-                <span class="label-caps">OPTION CHAIN / TECHNICAL SIGNALS</span>
-                <h2>期权链与技术信号</h2>
-              </div>
-            </div>
-            <div class="detail-bottom-grid">
-              <div id="detail-option-chain" class="detail-option-chain-slot"></div>
-              <section class="detail-technical-signals" aria-labelledby="detail-technical-signals-title">
-                <div class="detail-section-heading detail-section-heading--compact">
-                  <div>
-                    <span class="label-caps">TECHNICAL SIGNALS</span>
-                    <h3 id="detail-technical-signals-title">信号指标网格</h3>
-                  </div>
-                </div>
-                ${renderSignalPanels(signalsPayload)}
-                <section class="detail-expirations">
-                  <span class="label-caps">Option Expirations</span>
-                  ${renderExpirations(expirations)}
-                </section>
-              </section>
-            </div>
-          </section>
-        </div>
-      </section>
-    `;
-
-    bindBackBreadcrumb();
-    const chartContainer = document.getElementById('detail-tradingview-chart');
-    await renderChart(chartContainer, stock.ticker, '1d', chartPayload);
-    mountOptionChain(document.getElementById('detail-option-chain'), stock.ticker, expirations);
-    mountTopBottomAnalysis(document.getElementById('detail-ai-analysis'), stock.ticker, topBottomPayload);
-    app.focus({ preventScroll: true });
-  } catch (error) {
-    console.error(`Failed to render detail page for ${ticker}`, error);
-    renderError(ticker, error);
-    bindBackBreadcrumb();
-  }
+  mountOptionChain(document.getElementById('detail-option-chain'), stock.ticker, expirations);
+  app.focus({ preventScroll: true });
 }
 
 export const renderDetail = mountDetail;

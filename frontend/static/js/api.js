@@ -157,5 +157,21 @@ export const api = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' }
     });
+  },
+
+  marketStatus() {
+    return tryEndpoints([`${API_BASE}/market/status`]);
+  },
+
+  signalAI(ticker) {
+    const symbol = encodeURIComponent(String(ticker).toUpperCase());
+    return fetchJson(`${API_BASE}/signals/stock/${symbol}/ai-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 };
+
+export function safe(p) {
+  return p.then((d) => d).catch((e) => ({ __error: true, message: e.message }));
+}
