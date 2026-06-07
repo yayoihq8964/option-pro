@@ -66,9 +66,13 @@ async def unusual_activity(
             pass
         return rows
 
-    # 10 tickers × 2 expirations in parallel — ~10× faster
+    # 5 in flight at a time — fast but doesn't trip Yahoo's rate limiter
+    sem = asyncio.Semaphore(5)
+    async def _bounded(s):
+        async with sem:
+            return await asyncio.to_thread(_scan_one, s)
     per_ticker = await asyncio.gather(
-        *[asyncio.to_thread(_scan_one, s) for s in POPULAR_TICKERS],
+        *[_bounded(s) for s in POPULAR_TICKERS],
         return_exceptions=True,
     )
     results = []

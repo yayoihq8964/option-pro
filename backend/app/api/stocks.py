@@ -97,27 +97,45 @@ async def _build_watchlist():
         all_tickers.extend(sec["tickers"])
     all_tickers = list(dict.fromkeys(all_tickers))
 
+    # Cap concurrent yfinance calls so we don't 228-blast Yahoo and trip its
+    # per-IP rate limiter. Empirically Yahoo is fine with 8 concurrent from a
+    # single browser-impersonating session, but stalls hard above ~50.
+    sem = asyncio.Semaphore(8)
+
     async def fetch_one(ticker):
         def _work():
-            try:
-                tk = yf.Ticker(ticker)
-                info = tk.fast_info
-                price = float(info.last_price)
-                prev = float(info.previous_close) if info.previous_close else price
-                from app.services.zh_names import get_zh_name
-                return {
-                    "ticker": ticker,
-                    "name": get_zh_name(ticker) or ticker,
-                    "price": round(price, 2),
-                    "change_percent": round((price - prev) / prev * 100, 2) if prev else 0,
-                }
-            except Exception:
-                return None
+            # Retry once with backoff on rate limit
+            import random, time as _t
+            for attempt in range(2):
+                try:
+                    tk = yf.Ticker(ticker)
+                    info = tk.fast_info
+                    price = float(info.last_price)
+                    prev = float(info.previous_close) if info.previous_close else price
+                    from app.services.zh_names import get_zh_name
+                    return {
+                        "ticker": ticker,
+                        "name": get_zh_name(ticker) or ticker,
+                        "price": round(price, 2),
+                        "change_percent": round((price - prev) / prev * 100, 2) if prev else 0,
+                    }
+                except Exception as e:
+                    if attempt == 0 and "rate" in str(e).lower():
+                        _t.sleep(0.5 + random.random())
+                        continue
+                    return None
 
-        return await asyncio.to_thread(_work)
+        async with sem:
+            return await asyncio.to_thread(_work)
 
     results = await asyncio.gather(*[fetch_one(t) for t in all_tickers], return_exceptions=True)
     price_map = {r["ticker"]: r for r in results if isinstance(r, dict)}
+
+    # If yfinance limited us hard, less than 30% succeeded — treat as failure
+    # so the cache returns the previous (stale) snapshot instead of an empty one.
+    success_ratio = len(price_map) / max(len(all_tickers), 1)
+    if success_ratio < 0.3:
+        raise RuntimeError(f"watchlist mostly failed ({len(price_map)}/{len(all_tickers)} succeeded)")
 
     groups = []
     for sec_id, sec in SECTORS.items():
