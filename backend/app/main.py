@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Import yahoo.py first — it monkey-patches yf.Ticker to use curl_cffi session
+# so all downstream yfinance usage dodges Yahoo's rate limiter.
+from app.services import yahoo  # noqa: F401
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

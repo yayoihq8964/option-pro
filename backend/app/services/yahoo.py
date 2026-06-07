@@ -6,6 +6,24 @@ from typing import Any
 
 import yfinance as yf
 
+# Use curl_cffi browser-impersonation session to dodge Yahoo's rate limits.
+# Falls back to default session if curl_cffi isn't available.
+try:
+    from curl_cffi import requests as _cffi_requests
+    _yf_session = _cffi_requests.Session(impersonate="chrome")
+except Exception:
+    _yf_session = None
+
+# Monkey-patch yf.Ticker so ALL call sites (stocks.py, signals.py, earnings.py,
+# sectors.py, etc.) automatically get our impersonating session.
+if _yf_session is not None:
+    _orig_init = yf.Ticker.__init__
+    def _patched_init(self, ticker, session=None, **kwargs):
+        if session is None:
+            session = _yf_session
+        _orig_init(self, ticker, session=session, **kwargs)
+    yf.Ticker.__init__ = _patched_init
+
 # Simple in-memory cache for yfinance data. Values are (expires_at, data).
 _cache: dict[str, tuple[datetime, Any]] = {}
 
@@ -15,12 +33,20 @@ def _cached(key: str, ttl_seconds: int, loader):
     hit = _cache.get(key)
     if hit and hit[0] > now:
         return hit[1]
-    value = loader()
+    try:
+        value = loader()
+    except Exception:
+        # On rate-limit or transient error, return stale cache if available
+        if hit:
+            return hit[1]
+        raise
     _cache[key] = (now + timedelta(seconds=ttl_seconds), value)
     return value
 
 
 def _get_ticker(symbol: str) -> yf.Ticker:
+    if _yf_session is not None:
+        return yf.Ticker(symbol.upper(), session=_yf_session)
     return yf.Ticker(symbol.upper())
 
 
