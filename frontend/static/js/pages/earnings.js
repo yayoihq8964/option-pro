@@ -1,11 +1,8 @@
 import { api } from '../api.js';
 import { renderEarningsCorrelationAI } from '../components/aiAnalysis.js';
 
-const FALLBACK_EARNINGS = [
-  { ticker: 'NVDA', company: '英伟达', date: 'T+2', period: 'Q2', epsEstimate: 0.64, revenueEstimate: '28.4B' },
-  { ticker: 'ADBE', company: 'Adobe', date: 'T+5', period: 'Q2', epsEstimate: 4.39, revenueEstimate: '5.3B' },
-  { ticker: 'TSLA', company: '特斯拉', date: 'T+8', period: 'Q2', epsEstimate: 0.51, revenueEstimate: '24.6B' }
-];
+// No fake fallback — show error state when API fails.
+const FALLBACK_EARNINGS = [];
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -149,8 +146,8 @@ export async function renderEarnings() {
     if (!earnings.length) throw new Error('财报 API 未返回数据');
     tableBody.innerHTML = renderEarningsRows(earnings);
   } catch (error) {
-    console.warn('api.earnings() failed; rendering fallback earnings rows.', error);
-    tableBody.innerHTML = renderEarningsRows(FALLBACK_EARNINGS);
+    console.warn('api.earnings() failed.', error);
+    tableBody.innerHTML = `<tr><td colspan="6" style="padding:48px;text-align:center;color:var(--color-muted)"><strong style="display:block;margin-bottom:6px;color:var(--color-crimson)">数据暂不可用</strong>财报 API 请求失败 · 请稍后刷新</td></tr>`;
   }
   document.querySelectorAll('[data-ticker]').forEach((button) => button.addEventListener('click', () => navigateToDetail(button.dataset.ticker)));
   bindEarningsCorrelation();

@@ -22,20 +22,8 @@ const COMPANY_BY_TICKER = {
   NVDA: 'NVIDIA Corp.', AMD: 'Advanced Micro Devices', TSLA: 'Tesla Inc.', NFLX: 'Netflix Inc.', JPM: 'JPMorgan Chase', SPY: 'SPDR S&P 500 ETF', QQQ: 'Invesco QQQ Trust'
 };
 
-const FALLBACK_WATCHLIST = [
-  { ticker: 'AAPL', companyName: 'Apple Inc.', sector: 'TECH', price: 195.64, changePercent: 0.84, spark: [191.2, 192.4, 191.8, 193.6, 194.2, 194.8, 195.64], signalSummary: 'Momentum firming into product cycle.' },
-  { ticker: 'NVDA', companyName: 'NVIDIA Corp.', sector: 'SEMIS', price: 121.79, changePercent: 1.72, spark: [115.1, 116.8, 118.2, 117.9, 120.3, 119.7, 121.79], signalSummary: 'Bullish volatility regime remains intact.' },
-  { ticker: 'TSLA', companyName: 'Tesla Inc.', sector: 'AUTO', price: 177.48, changePercent: -1.12, spark: [184.1, 182.6, 181.9, 179.4, 180.2, 178.1, 177.48], signalSummary: 'Bearish pressure near short-term support.' }
-];
-
-const FALLBACK_HEATMAP = [
-  { ticker: 'AAPL', label: 'Apple Inc.', changePercent: 0.84, weight: 2.4 },
-  { ticker: 'NVDA', label: 'NVIDIA Corp.', changePercent: 1.72, weight: 2.8 },
-  { ticker: 'MSFT', label: 'Microsoft Corp.', changePercent: 0.38, weight: 2.2 },
-  { ticker: 'TSLA', label: 'Tesla Inc.', changePercent: -1.12, weight: 1.8 },
-  { ticker: 'JPM', label: 'JPMorgan Chase', changePercent: -0.42, weight: 1.3 },
-  { ticker: 'XOM', label: 'Exxon Mobil', changePercent: 0.21, weight: 1.1 }
-];
+// Note: Real prices only. No fallback fake data — showing wrong prices in a
+// financial tool is worse than showing nothing.
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (character) => ({
@@ -271,11 +259,11 @@ async function fetchAndCacheBackend() {
     }));
     return stocks;
   } catch (e) {
-    console.warn('api.watchlist() failed; using fallback.', e);
-    const fallback = FALLBACK_WATCHLIST.map(normalizeStock);
-    __watchlistState.backendStocks = fallback;
-    __watchlistState.heatmapData = FALLBACK_HEATMAP;
-    return fallback;
+    console.warn('api.watchlist() failed; showing empty state.', e);
+    __watchlistState.backendStocks = [];
+    __watchlistState.heatmapData = [];
+    __watchlistState.fetchError = e.message || 'API unavailable';
+    return [];
   }
 }
 
@@ -292,7 +280,10 @@ function renderCardsFromCustom() {
     return s;
   });
   if (!ordered.length) {
-    grid.innerHTML = '<div class="detail-muted" style="padding:32px;text-align:center">自选列表为空 · 点击右上角「编辑」添加代码</div>';
+    const msg = __watchlistState.fetchError
+      ? `<div class="detail-muted" style="padding:32px;text-align:center"><strong style="display:block;margin-bottom:6px;color:var(--color-crimson)">数据暂不可用</strong>API 返回失败 · 请稍后刷新</div>`
+      : '<div class="detail-muted" style="padding:32px;text-align:center">自选列表为空 · 点击右上角「编辑」添加代码</div>';
+    grid.innerHTML = msg;
     return;
   }
   grid.innerHTML = ordered.map((s) => renderStockCard(s, __editMode)).join('');

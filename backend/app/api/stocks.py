@@ -34,15 +34,7 @@ async def _cached_endpoint(key: str, ttl: int, loader):
     return value
 
 
-def _sanitize(obj):
-    """Recursively replace NaN/Inf with None for JSON serialization."""
-    if isinstance(obj, float):
-        return None if (math.isnan(obj) or math.isinf(obj)) else obj
-    if isinstance(obj, dict):
-        return {k: _sanitize(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_sanitize(v) for v in obj]
-    return obj
+from app.services.utils import sanitize as _sanitize
 
 
 KNOWN_TICKERS = {

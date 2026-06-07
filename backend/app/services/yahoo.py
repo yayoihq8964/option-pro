@@ -86,10 +86,17 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     return computed
             return iv  # return raw even if low
 
+        def _greeks_for(strike, iv, is_call):
+            if not (price and price > 0 and iv and iv > 0):
+                return {"delta": None, "gamma": None, "theta": None, "vega": None, "rho": None}
+            return compute_greeks(price, strike, T, 0.05, iv, is_call=is_call)
+
         calls = []
         for _, row in chain.calls.iterrows():
             strike = float(row["strike"])
             last_price = _safe_float(row.get("lastPrice"))
+            iv = _resolve_iv(row, strike, last_price, price, is_call=True)
+            greeks = _greeks_for(strike, iv, True)
             calls.append(
                 {
                     "ticker": row.get("contractSymbol", ""),
@@ -107,10 +114,11 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     "day_change_percent": _safe_float(row.get("percentChange")),
                     "volume": _safe_int(row.get("volume")),
                     "open_interest": _safe_int(row.get("openInterest")),
-                    "implied_volatility": _resolve_iv(row, strike, last_price, price, is_call=True),
+                    "implied_volatility": iv,
                     "in_the_money": bool(row.get("inTheMoney", False)),
                     "break_even": strike + (last_price or 0),
                     "break_even_price": strike + (last_price or 0),
+                    **greeks,
                 }
             )
 
@@ -118,6 +126,8 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
         for _, row in chain.puts.iterrows():
             strike = float(row["strike"])
             last_price = _safe_float(row.get("lastPrice"))
+            iv = _resolve_iv(row, strike, last_price, price, is_call=False)
+            greeks = _greeks_for(strike, iv, False)
             puts.append(
                 {
                     "ticker": row.get("contractSymbol", ""),
@@ -135,10 +145,11 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
                     "day_change_percent": _safe_float(row.get("percentChange")),
                     "volume": _safe_int(row.get("volume")),
                     "open_interest": _safe_int(row.get("openInterest")),
-                    "implied_volatility": _resolve_iv(row, strike, last_price, price, is_call=False),
+                    "implied_volatility": iv,
                     "in_the_money": bool(row.get("inTheMoney", False)),
                     "break_even": strike - (last_price or 0),
                     "break_even_price": strike - (last_price or 0),
+                    **greeks,
                 }
             )
 
@@ -363,3 +374,41 @@ def compute_iv(option_price, S, K, T, r=0.05, is_call=True):
             break
 
     return round(sigma, 4) if 0.001 < sigma < 5.0 else None
+
+
+def compute_greeks(S, K, T, r, sigma, is_call=True):
+    """Black-Scholes Greeks. Returns dict with delta, gamma, theta, vega, rho.
+
+    All inputs must be > 0. theta is per-day (not per-year).
+    Returns None for any greek that fails to compute.
+    """
+    if not (S > 0 and K > 0 and T > 0 and sigma > 0):
+        return {"delta": None, "gamma": None, "theta": None, "vega": None, "rho": None}
+    try:
+        sqrtT = sqrt(T)
+        d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrtT)
+        d2 = d1 - sigma * sqrtT
+        Nd1 = _norm_cdf(d1)
+        Nd2 = _norm_cdf(d2)
+        nd1 = _norm_pdf(d1)
+        disc = exp(-r * T)
+        # Common
+        gamma = nd1 / (S * sigma * sqrtT)
+        vega = S * nd1 * sqrtT / 100.0  # per 1% IV change
+        if is_call:
+            delta = Nd1
+            theta = (- S * nd1 * sigma / (2 * sqrtT) - r * K * disc * Nd2) / 365.0
+            rho = K * T * disc * Nd2 / 100.0
+        else:
+            delta = Nd1 - 1.0
+            theta = (- S * nd1 * sigma / (2 * sqrtT) + r * K * disc * (1 - Nd2)) / 365.0
+            rho = -K * T * disc * (1 - Nd2) / 100.0
+        return {
+            "delta": round(delta, 4),
+            "gamma": round(gamma, 5),
+            "theta": round(theta, 4),
+            "vega": round(vega, 4),
+            "rho": round(rho, 4),
+        }
+    except Exception:
+        return {"delta": None, "gamma": None, "theta": None, "vega": None, "rho": None}

@@ -1,26 +1,10 @@
 import { api } from '../api.js';
 import { renderHeatmap } from '../components/heatmap.js';
 
-const FALLBACK_SECTORS = [
-  { name: '半导体', ticker: 'NVDA', performance: 1.72, iv: 42.1, leaders: ['NVDA', 'AMD', 'AVGO'] },
-  { name: '科技', ticker: 'AAPL', performance: 0.84, iv: 28.7, leaders: ['AAPL', 'MSFT', 'META'] },
-  { name: '汽车', ticker: 'TSLA', performance: -1.12, iv: 51.4, leaders: ['TSLA', 'F', 'GM'] }
-];
-
-const FALLBACK_IV = [
-  { ticker: 'TSLA', sector: '汽车', ivRank: 74, iv: 51.4, change: -1.12 },
-  { ticker: 'NVDA', sector: '半导体', ivRank: 68, iv: 42.1, change: 1.72 },
-  { ticker: 'AAPL', sector: '科技', ivRank: 41, iv: 28.7, change: 0.84 }
-];
-
-const FALLBACK_HEATMAP = [
-  { ticker: 'NVDA', label: '英伟达', changePercent: 1.72, weight: 2.4 },
-  { ticker: 'AAPL', label: '苹果', changePercent: 0.84, weight: 2.1 },
-  { ticker: 'MSFT', label: '微软', changePercent: 0.52, weight: 2.0 },
-  { ticker: 'TSLA', label: '特斯拉', changePercent: -1.12, weight: 1.7 },
-  { ticker: 'JPM', label: '摩根大通', changePercent: -0.35, weight: 1.3 },
-  { ticker: 'XOM', label: '埃克森美孚', changePercent: -2.24, weight: 1.4 }
-];
+// No fake fallbacks — real data or empty state.
+const FALLBACK_SECTORS = [];
+const FALLBACK_IV = [];
+const FALLBACK_HEATMAP = [];
 
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (character) => ({

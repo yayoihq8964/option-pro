@@ -11,8 +11,10 @@ const money = (n) => n == null || Number.isNaN(Number(n)) ? '—' : `$${Number(n
 const large = (n) => n == null ? '—' : n >= 1e12 ? `$${(n/1e12).toFixed(2)}T` : n >= 1e9 ? `$${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n/1e6).toFixed(1)}M` : `$${Number(n).toLocaleString()}`;
 const num = (n) => n == null ? '—' : Number(n).toLocaleString();
 
-let chartHandle = null;
-let chartRefreshTimer = null;
+// Track the "active" mount so older mountDetail calls can detect they've been
+// superseded and bail out of late cleanups. Each mount captures its own
+// local handle + timer in closure — no shared mutable state.
+let __activeMountId = 0;
 
 function renderShell(ticker) {
   return `<section class="detail-page">
@@ -86,20 +88,21 @@ function renderHeaderAndStats(stock) {
     </div>`;
 }
 
-async function loadChart(ticker, range) {
+async function loadChart(ticker, range, state) {
   const el = document.getElementById('modal-chart');
-  if (!el) return;
+  if (!el || state.cancelled) return;
   el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center"><div style="width:24px;height:24px;border:2px solid #000;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite"></div></div>';
-  chartHandle?.destroy?.(); chartHandle = null;
+  state.chartHandle?.destroy?.(); state.chartHandle = null;
   const data = await safe(api.chart(ticker, range));
+  if (state.cancelled) return;
   if (data.__error) {
     el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--color-crimson);font-size:14px">K线加载失败</div>';
     return;
   }
-  chartHandle = renderChart(el, data, data.visible || 0);
+  state.chartHandle = renderChart(el, data, data.visible || 0);
 }
 
-async function loadOptionAlertsAndChain(ticker) {
+async function loadOptionAlertsAndChain(ticker, state) {
   const alertsSection = document.getElementById('option-alerts-section');
   const chainSection = document.getElementById('option-chain-container');
   const ex = await safe(api.expirations(ticker));
@@ -159,6 +162,11 @@ export async function mountDetail(tickerFromRoute) {
   const ticker = String(tickerFromRoute || '').trim().toUpperCase();
   if (!ticker) { location.hash = '#watchlist'; return; }
 
+  // Per-mount state in closure. Older mounts can still run cleanup on their
+  // own state without trampling on this mount.
+  const mountId = ++__activeMountId;
+  const state = { cancelled: false, chartHandle: null, refreshTimer: null };
+
   const app = document.getElementById('app');
   app.innerHTML = renderShell(ticker);
 
@@ -176,33 +184,40 @@ export async function mountDetail(tickerFromRoute) {
   drawTf();
   tf.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-range]');
-    if (!b) return;
+    if (!b || state.cancelled) return;
     currentRange = b.dataset.range;
     drawTf();
-    await loadChart(ticker, currentRange);
+    await loadChart(ticker, currentRange, state);
   });
 
   // Header + stats
-  safe(api.stock(ticker)).then(d => { if (!d.__error) renderHeaderAndStats(d); });
+  safe(api.stock(ticker)).then(d => {
+    if (state.cancelled) return;
+    if (!d.__error) renderHeaderAndStats(d);
+  });
 
   // Chart with auto-refresh
-  if (chartRefreshTimer) clearInterval(chartRefreshTimer);
-  chartRefreshTimer = setInterval(() => loadChart(ticker, currentRange), 30 * 60 * 1000);
-  loadChart(ticker, currentRange);
+  state.refreshTimer = setInterval(() => {
+    if (state.cancelled) return;
+    loadChart(ticker, currentRange, state);
+  }, 30 * 60 * 1000);
+  loadChart(ticker, currentRange, state);
 
   // Top/Bottom signals (4 gauges + AI analysis)
   safe(api.topBottomSignals(ticker)).then(d => {
+    if (state.cancelled) return;
     const el = document.getElementById('top-bottom-signals');
     if (el) renderTopBottomSignals(el, ticker, d);
   });
 
   // Option alerts + chain
-  loadOptionAlertsAndChain(ticker);
+  loadOptionAlertsAndChain(ticker, state);
 
-  // Cleanup on hash change
+  // Cleanup on hash change — only this mount's state, not whatever's mounted now
   const cleanup = () => {
-    if (chartRefreshTimer) { clearInterval(chartRefreshTimer); chartRefreshTimer = null; }
-    chartHandle?.destroy?.(); chartHandle = null;
+    state.cancelled = true;
+    if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; }
+    state.chartHandle?.destroy?.(); state.chartHandle = null;
     window.removeEventListener('hashchange', cleanup);
   };
   window.addEventListener('hashchange', cleanup, { once: true });

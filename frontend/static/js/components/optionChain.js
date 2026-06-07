@@ -93,6 +93,9 @@ export function renderOptionChain(chain) {
     allStrikes = allStrikes.slice(lo, hi);
   }
 
+  const fmtDelta = (d) => (d == null || Number.isNaN(Number(d))) ? '—' : Number(d).toFixed(2);
+  const fmtGamma = (g) => (g == null || Number.isNaN(Number(g))) ? '—' : Number(g).toFixed(3);
+
   const rows = allStrikes.map((strike) => {
     const g = groups[strike] || groups[String(strike)] || groups[strike.toFixed(1)] || groups[strike + '.0'] || {};
     const c = g.call || {};
@@ -105,17 +108,30 @@ export function renderOptionChain(chain) {
     const cIV = optionIV(c);
     const pIV = optionIV(p);
 
-    const cellStyle = 'padding:10px 12px;font-size:12px;text-align:right';
+    const cellStyle = 'padding:8px 10px;font-size:12px;text-align:right';
     const strikeCellStyle = atm
-      ? 'padding:10px 12px;text-align:center;background:#000;color:#fff;font-weight:800;font-family:"JetBrains Mono"'
-      : 'padding:10px 12px;text-align:center;background:var(--color-surface);font-weight:800;font-family:"JetBrains Mono"';
+      ? 'padding:8px 10px;text-align:center;background:#000;color:#fff;font-weight:800;font-family:"JetBrains Mono"'
+      : 'padding:8px 10px;text-align:center;background:var(--color-surface);font-weight:800;font-family:"JetBrains Mono"';
+
+    // Delta color: green for ITM, fade for OTM
+    const deltaColor = (d) => {
+      if (d == null) return 'var(--color-muted)';
+      const abs = Math.abs(Number(d));
+      if (abs >= 0.5) return 'var(--color-on-surface)';
+      if (abs >= 0.2) return 'var(--color-muted)';
+      return '#9c9c9c';
+    };
 
     return `<tr style="${atm ? 'background:#fafaf8' : ''};border-bottom:1px solid var(--color-border)">
       <td class="mono" style="${cellStyle}">${cVol != null ? int(cVol) : '—'}</td>
       <td class="mono" style="${cellStyle};color:var(--color-muted)">${cOI != null ? int(cOI) : '—'}</td>
+      <td class="mono" style="${cellStyle};color:${deltaColor(c.delta)}">${fmtDelta(c.delta)}</td>
+      <td class="mono" style="${cellStyle};color:var(--color-muted)">${fmtGamma(c.gamma)}</td>
       <td class="mono" style="${cellStyle};color:var(--color-muted)">${cIV ? pct(cIV) : '—'}</td>
       <td style="${strikeCellStyle}">${money(strike)}</td>
       <td class="mono" style="${cellStyle};color:var(--color-muted)">${pIV ? pct(pIV) : '—'}</td>
+      <td class="mono" style="${cellStyle};color:var(--color-muted)">${fmtGamma(p.gamma)}</td>
+      <td class="mono" style="${cellStyle};color:${deltaColor(p.delta)}">${fmtDelta(p.delta)}</td>
       <td class="mono" style="${cellStyle};color:var(--color-muted)">${pOI != null ? int(pOI) : '—'}</td>
       <td class="mono" style="${cellStyle}">${pVol != null ? int(pVol) : '—'}</td>
     </tr>`;
@@ -125,21 +141,25 @@ export function renderOptionChain(chain) {
     <table style="width:100%;border-collapse:collapse">
       <thead>
         <tr style="background:var(--color-surface);border-bottom:1px solid var(--color-border)">
-          <th colspan="3" class="label-caps" style="padding:10px;text-align:center">← CALLS</th>
+          <th colspan="5" class="label-caps" style="padding:10px;text-align:center">← CALLS</th>
           <th class="label-caps" style="padding:10px;text-align:center;background:#fff;color:#000;font-weight:800">STRIKE</th>
-          <th colspan="3" class="label-caps" style="padding:10px;text-align:center">PUTS →</th>
+          <th colspan="5" class="label-caps" style="padding:10px;text-align:center">PUTS →</th>
         </tr>
         <tr style="background:var(--color-surface);border-bottom:1px solid var(--color-border)">
-          <th class="label-caps" style="padding:8px 12px;text-align:right">VOL</th>
-          <th class="label-caps" style="padding:8px 12px;text-align:right">OI</th>
-          <th class="label-caps" style="padding:8px 12px;text-align:right">IV</th>
-          <th class="label-caps" style="padding:8px 12px;text-align:center">行权价</th>
-          <th class="label-caps" style="padding:8px 12px;text-align:right">IV</th>
-          <th class="label-caps" style="padding:8px 12px;text-align:right">OI</th>
-          <th class="label-caps" style="padding:8px 12px;text-align:right">VOL</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">VOL</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">OI</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">Δ</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">Γ</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">IV</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:center">行权价</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">IV</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">Γ</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">Δ</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">OI</th>
+          <th class="label-caps" style="padding:8px 10px;text-align:right">VOL</th>
         </tr>
       </thead>
-      <tbody>${rows || '<tr><td colspan="7" style="padding:32px;text-align:center;color:var(--color-muted)">暂无期权链</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="11" style="padding:32px;text-align:center;color:var(--color-muted)">暂无期权链</td></tr>'}</tbody>
     </table>
   </div>`;
 }
