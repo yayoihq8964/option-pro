@@ -38,7 +38,7 @@ function normalizeTopBottom(payload = {}, signalsPayload = {}) {
     bottom: {
       score: Math.max(0, Math.min(100, num(bottom, ['score','confidence','bottomScore','bottom_score'], num(source, ['bottomScore','bottom_score','bullishScore','supportScore'], 34)))),
       factors: [
-        ['支撑区间', first(bottom, ['support','supportZone','support_zone'], first(source, ['support','supportZone'], first(sig, ['support'], '接近需求支撑区'))],
+        ['支撑区间', first(bottom, ['support','supportZone','support_zone'], first(source, ['support','supportZone'], first(sig, ['support'], '接近需求支撑区')))],
         ['成交量 / 资金流', first(bottom, ['volume','flow','volumeProfile'], first(source, ['volumeProfile','callFlow'], '量能开始企稳'))],
         ['智能摘要', first(bottom, ['summary','thesis'], first(source, ['bottomSummary'], '下行动能衰竭与支撑行为构成潜在反弹窗口'))]
       ]
