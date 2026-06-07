@@ -146,6 +146,13 @@ async function loadSectorDetail(sectorId, sectorName) {
     if (normalized.length) ivItems = normalized;
   }
   if (ivList) ivList.innerHTML = renderIvRanking(ivItems);
+
+  // Backfill avg IV onto the sector card
+  if (ivItems.length) {
+    const avgIv = ivItems.reduce((sum, it) => sum + (Number(it.ivRank) || 0), 0) / ivItems.length;
+    const cardIv = document.querySelector(`[data-sector-iv="${sectorId}"]`);
+    if (cardIv) cardIv.textContent = avgIv.toFixed(1);
+  }
   const hmPayload = hmResult.status === 'fulfilled' ? hmResult.value : FALLBACK_HEATMAP;
   if (heatmap) heatmap.innerHTML = renderHeatmap(hmPayload);
   // Wire ticker clicks in the new content
@@ -160,31 +167,51 @@ export async function renderSectors() {
 
   let sectors = FALLBACK_SECTORS;
   let sectorList = [];
+  let watchlistGroups = [];
   try {
-    const sectorData = await api.sectors();
+    const [sectorData, watchlistData] = await Promise.all([
+      api.sectors(),
+      api.watchlist().catch(() => ({ groups: [] }))
+    ]);
     sectorList = sectorData?.sectors || [];
+    watchlistGroups = watchlistData?.groups || [];
     const rawSectors = normalizeSectors(sectorData);
     if (rawSectors.length) sectors = rawSectors;
   } catch (e) {
     console.warn('Sectors data load error:', e);
   }
 
+  // Compute performance from watchlist groups (matched by sector name)
+  const performanceByName = {};
+  for (const g of watchlistGroups) {
+    const stocks = g.stocks || [];
+    if (stocks.length) {
+      const avg = stocks.reduce((sum, s) => sum + Number(s.change_percent || 0), 0) / stocks.length;
+      performanceByName[g.name] = avg;
+    }
+  }
+
   if (sectorGrid) {
-    sectorGrid.innerHTML = sectors.map((sector, i) => `
-      <article class="sector-card" data-sector-id="${sectorList[i]?.id || sector.id || ''}" data-sector-name="${sector.name}" style="cursor:pointer">
-        <div class="sector-card__heading">
-          <span class="label-caps">板块</span>
-          <strong>${sector.name}</strong>
-        </div>
-        <div class="sector-card__metrics">
-          <span><small class="label-caps">表现</small><b class="mono font-data-mono ${sector.performance >= 0 ? 'up' : 'down'}" data-numeric>${formatPercent(sector.performance)}</b></span>
-          <span><small class="label-caps">平均 IV</small><b class="mono font-data-mono" data-numeric>${Number.isFinite(sector.iv) ? sector.iv.toFixed(1) : '—'}</b></span>
-        </div>
-        <div class="sector-tabs">
-          ${(sector.leaders.length ? sector.leaders : [sector.ticker]).filter(Boolean).map((t) => `<button class="sector-pill" type="button" data-ticker="${t}">${t}</button>`).join('')}
-        </div>
-      </article>
-    `).join('');
+    sectorGrid.innerHTML = sectors.map((sector, i) => {
+      const id = sectorList[i]?.id || sector.id || '';
+      const perf = performanceByName[sector.name] ?? sector.performance ?? 0;
+      const ivLabel = Number.isFinite(sector.iv) && sector.iv > 0 ? sector.iv.toFixed(1) : '点击查看';
+      return `
+        <article class="sector-card" data-sector-id="${id}" data-sector-name="${sector.name}" style="cursor:pointer">
+          <div class="sector-card__heading">
+            <span class="label-caps">板块</span>
+            <strong>${sector.name}</strong>
+          </div>
+          <div class="sector-card__metrics">
+            <span><small class="label-caps">表现</small><b class="mono font-data-mono ${perf >= 0 ? 'up' : 'down'}" data-numeric>${formatPercent(perf)}</b></span>
+            <span><small class="label-caps">平均 IV</small><b class="mono font-data-mono" data-sector-iv="${id}" data-numeric>${ivLabel}</b></span>
+          </div>
+          <div class="sector-tabs">
+            ${(sector.leaders.length ? sector.leaders : (sectorList[i]?.tickers || []).slice(0,4)).filter(Boolean).map((t) => `<button class="sector-pill" type="button" data-ticker="${t}">${t}</button>`).join('')}
+          </div>
+        </article>
+      `;
+    }).join('');
     // Wire sector card clicks (excluding the sector-pill ticker buttons)
     sectorGrid.querySelectorAll('.sector-card').forEach((card) => {
       card.addEventListener('click', (e) => {

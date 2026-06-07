@@ -3,6 +3,7 @@ import { mountDetail } from './pages/detail.js';
 import { renderSectors } from './pages/sectors.js';
 import { renderEarnings } from './pages/earnings.js';
 import { initSearch } from './components/search.js';
+import { mountIndexTicker } from './components/indices.js';
 
 const routes = {
   watchlist: renderWatchlist,
@@ -90,9 +91,11 @@ function renderDetailRoute() {
   mountDetail(ticker);
 }
 
+let __tickerMounted = false;
 export function router() {
   initSearch();
   initResponsiveSidebar();
+  if (!__tickerMounted) { __tickerMounted = true; mountIndexTicker().catch(() => {}); }
   const route = getRouteFromHash();
   if (!window.location.hash || !routes[window.location.hash.replace('#', '').split('/')[0]]) {
     if (!window.location.hash) {
