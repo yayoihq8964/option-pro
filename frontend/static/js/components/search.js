@@ -45,7 +45,12 @@ function uniqueByTicker(items) {
 async function loadSearchUniverse() {
   try {
     const payload = await api.watchlist();
-    const watchlist = Array.isArray(payload) ? payload : (payload?.watchlist ?? payload?.items ?? payload?.data ?? payload?.stocks ?? []);
+    let watchlist = [];
+    if (payload?.groups) {
+      for (const g of payload.groups) watchlist.push(...(g.stocks || []));
+    } else {
+      watchlist = Array.isArray(payload) ? payload : (payload?.watchlist ?? payload?.items ?? payload?.data ?? payload?.stocks ?? []);
+    }
     const universe = uniqueByTicker([...watchlist, ...FALLBACK_SYMBOLS]);
     return universe.length ? universe : FALLBACK_SYMBOLS;
   } catch (error) {

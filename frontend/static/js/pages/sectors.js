@@ -130,15 +130,25 @@ export async function renderSectors() {
   const ivList = document.getElementById('iv-ranking-list');
   const heatmap = document.getElementById('sector-heatmap');
 
-  const [sectorsResult, ivResult, heatmapResult] = await Promise.allSettled([
-    api.sectors(),
-    api.ivRanking(),
-    api.heatmap()
-  ]);
-
-  const sectors = sectorsResult.status === 'fulfilled' && normalizeSectors(sectorsResult.value).length ? normalizeSectors(sectorsResult.value) : FALLBACK_SECTORS;
-  const ivItems = ivResult.status === 'fulfilled' && normalizeIvRanking(ivResult.value).length ? normalizeIvRanking(ivResult.value) : FALLBACK_IV;
-  const heatmapPayload = heatmapResult.status === 'fulfilled' ? heatmapResult.value : FALLBACK_HEATMAP;
+  let sectors = FALLBACK_SECTORS, ivItems = FALLBACK_IV, heatmapPayload = FALLBACK_HEATMAP;
+  try {
+    const sectorData = await api.sectors();
+    const rawSectors = normalizeSectors(sectorData);
+    if (rawSectors.length) sectors = rawSectors;
+    // Use first sector for iv-ranking and heatmap
+    const firstId = sectorData?.sectors?.[0]?.id || 'semiconductors';
+    const [ivResult, hmResult] = await Promise.allSettled([
+      api.sectorIV(firstId),
+      api.sectorHeatmap(firstId)
+    ]);
+    if (ivResult.status === 'fulfilled') {
+      const normalized = normalizeIvRanking(ivResult.value);
+      if (normalized.length) ivItems = normalized;
+    }
+    if (hmResult.status === 'fulfilled') heatmapPayload = hmResult.value;
+  } catch (e) {
+    console.warn('Sectors data load error:', e);
+  }
 
   if (sectorGrid) sectorGrid.innerHTML = renderSectorCards(sectors);
   if (ivList) ivList.innerHTML = renderIvRanking(ivItems);

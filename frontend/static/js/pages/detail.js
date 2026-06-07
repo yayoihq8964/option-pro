@@ -118,9 +118,16 @@ export async function mountDetail(tickerFromRoute) {
 
   const chartEl = document.getElementById('detail-tradingview-chart');
   let refreshTimer;
+  let chartHandle = null;
   async function loadChart(range = '1d') {
+    chartEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%"><div style="width:24px;height:24px;border:2px solid #000;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite"></div></div>';
+    chartHandle?.destroy?.(); chartHandle = null;
     const chartData = await safe(api.chart(stock.ticker, range));
-    await renderChart(chartEl, stock.ticker, range, chartData.__error ? null : chartData);
+    if (!chartData.__error) {
+      chartHandle = renderChart(chartEl, chartData, chartData.visible || 0);
+    } else {
+      chartEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ba1a1a;font-size:14px">K线加载失败</div>';
+    }
     document.querySelectorAll('#detail-chart-tabs .ethos-timeframe-button').forEach((b) => b.classList.toggle('active', b.dataset.range === range));
   }
   document.querySelectorAll('#detail-chart-tabs .ethos-timeframe-button').forEach((b) => b.addEventListener('click', () => loadChart(b.dataset.range)));

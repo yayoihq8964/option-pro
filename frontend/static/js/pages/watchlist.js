@@ -79,8 +79,8 @@ function normalizeStock(stock) {
   const changePercent = getChangePercent(stock, spark);
   return {
     ticker,
-    companyName: stock.companyName ?? stock.company_name ?? stock.name ?? stock.company ?? COMPANY_BY_TICKER[ticker] ?? '上市公司',
-    sector: String(stock.sector ?? stock.industry ?? SECTOR_BY_TICKER[ticker] ?? 'WATCH').toUpperCase(),
+    companyName: stock.companyName ?? stock.company_name ?? stock.name_cn ?? stock.name ?? stock.company ?? COMPANY_BY_TICKER[ticker] ?? '上市公司',
+    sector: String(stock.sector ?? stock.industry ?? stock._groupName ?? SECTOR_BY_TICKER[ticker] ?? 'WATCH').toUpperCase(),
     price,
     changePercent,
     spark: spark.length ? spark : [price * 0.98, price * 0.99, price * 0.985, price * 1.005, price * 1.01, price * 1.004, price].filter(Number.isFinite),
@@ -89,6 +89,18 @@ function normalizeStock(stock) {
 }
 
 function normalizeWatchlistPayload(payload) {
+  // API returns {groups: [{id, name, stocks: [{ticker, name, price, change_percent}]}]}
+  if (payload?.groups && Array.isArray(payload.groups)) {
+    const all = [];
+    for (const group of payload.groups) {
+      const sectorName = group.name || '';
+      for (const s of (group.stocks || [])) {
+        s._groupName = sectorName;
+        all.push(s);
+      }
+    }
+    return all.map(normalizeStock).filter((stock) => stock.ticker);
+  }
   const items = Array.isArray(payload) ? payload : (payload?.watchlist ?? payload?.items ?? payload?.data ?? payload?.stocks ?? []);
   return items.map(normalizeStock).filter((stock) => stock.ticker);
 }
@@ -219,18 +231,16 @@ export async function renderWatchlist() {
   const grid = document.getElementById('watchlist-grid');
   const heatmap = document.getElementById('terminal-heatmap');
   try {
-    const [watchlistResult, heatmapResult] = await Promise.allSettled([
-      api.watchlist(),
-      api.heatmap()
-    ]);
-
-    if (watchlistResult.status !== 'fulfilled') throw watchlistResult.reason;
-    const stocks = normalizeWatchlistPayload(watchlistResult.value);
+    const payload = await api.watchlist();
+    const stocks = normalizeWatchlistPayload(payload);
     if (!stocks.length) throw new Error('Watchlist API returned no stocks');
     grid.innerHTML = stocks.map(renderStockCard).join('');
 
-    const heatmapPayload = heatmapResult.status === 'fulfilled' ? heatmapResult.value : FALLBACK_HEATMAP;
-    if (heatmap) heatmap.innerHTML = renderHeatmap(heatmapPayload);
+    // Build heatmap from watchlist data (no separate heatmap API)
+    const heatmapData = stocks.slice(0, 20).map(s => ({
+      ticker: s.ticker, label: s.companyName, changePercent: s.changePercent, weight: 1 + Math.abs(s.changePercent) / 2
+    }));
+    if (heatmap) heatmap.innerHTML = renderHeatmap(heatmapData);
   } catch (error) {
     console.warn('api.watchlist() failed; rendering fallback watchlist cards.', error);
     grid.innerHTML = FALLBACK_WATCHLIST.map(normalizeStock).map(renderStockCard).join('');
