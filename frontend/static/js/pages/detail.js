@@ -219,8 +219,8 @@ function renderHeaderAndStats(stock) {
 async function loadChart(ticker, range, state) {
   const el = document.getElementById('modal-chart');
   if (!el || state.cancelled) return;
-  el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center"><div style="width:24px;height:24px;border:2px solid #000;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite"></div></div>';
   state.chartHandle?.destroy?.(); state.chartHandle = null;
+  el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center"><div style="width:24px;height:24px;border:2px solid #000;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite"></div></div>';
   const data = await safe(api.chart(ticker, range));
   if (state.cancelled) return;
   if (data.__error) {

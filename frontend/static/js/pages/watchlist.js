@@ -144,25 +144,62 @@ function normalizeWatchlistPayload(payload) {
   return items.map(normalizeStock).filter((stock) => stock.ticker);
 }
 
+function sampleSparkline(points, targetCount = 8) {
+  if (points.length <= targetCount) return points;
+  return Array.from({ length: targetCount }, (_, index) => {
+    if (index === 0) return points[0];
+    if (index === targetCount - 1) return points[points.length - 1];
+    const start = Math.floor((index / targetCount) * points.length);
+    const end = Math.max(start + 1, Math.floor(((index + 1) / targetCount) * points.length));
+    const slice = points.slice(start, end);
+    return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+  });
+}
+
+function softenSparkline(points) {
+  if (points.length < 3) return points;
+  return points.map((value, index) => {
+    if (index === 0 || index === points.length - 1) return value;
+    return points[index - 1] * 0.24 + value * 0.52 + points[index + 1] * 0.24;
+  });
+}
+
+function smoothPath(coords) {
+  if (coords.length === 1) return `M ${coords[0].x.toFixed(2)} ${coords[0].y.toFixed(2)}`;
+  return coords.slice(1).reduce((path, point, index) => {
+    const prev = coords[index];
+    const dx = point.x - prev.x;
+    const c1x = prev.x + dx * 0.46;
+    const c2x = point.x - dx * 0.46;
+    return `${path} C ${c1x.toFixed(2)} ${prev.y.toFixed(2)}, ${c2x.toFixed(2)} ${point.y.toFixed(2)}, ${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
+  }, `M ${coords[0].x.toFixed(2)} ${coords[0].y.toFixed(2)}`);
+}
+
 function renderSparkline(points, isPositive) {
-  if (!points.length) return '<svg class="sparkline" viewBox="0 0 120 36" role="img" aria-label="No sparkline data"></svg>';
-  const width = 120;
-  const height = 36;
-  const padding = 3;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
+  if (!points.length) return '<svg class="sparkline" viewBox="0 0 160 56" role="img" aria-label="No sparkline data"></svg>';
+  const width = 160;
+  const height = 56;
+  const paddingX = 8;
+  const paddingY = 8;
+  const sampled = softenSparkline(sampleSparkline(points));
+  const min = Math.min(...sampled);
+  const max = Math.max(...sampled);
   const range = max - min || 1;
-  const step = points.length > 1 ? width / (points.length - 1) : width;
-  const d = points.map((value, index) => {
-    const x = index * step;
-    const y = height - padding - ((value - min) / range) * (height - padding * 2);
-    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-  }).join(' ');
-  const color = isPositive ? '#059669' : '#ba1a1a';
+  const step = sampled.length > 1 ? (width - paddingX * 2) / (sampled.length - 1) : width - paddingX * 2;
+  const coords = sampled.map((value, index) => ({
+    x: paddingX + index * step,
+    y: height - paddingY - ((value - min) / range) * (height - paddingY * 2),
+  }));
+  const d = smoothPath(coords);
+  const baseline = height - 2;
+  const color = '#008c72';
+  const trend = isPositive ? 'positive' : 'negative';
+  const first = coords[0];
+  const last = coords[coords.length - 1];
   return `
-    <svg class="sparkline" viewBox="0 0 ${width} ${height}" role="img" aria-label="7-day price sparkline" data-spark="7-day">
-      <path d="${d} L ${width} ${height} L 0 ${height} Z" fill="${color}" opacity="0.08"></path>
-      <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+    <svg class="sparkline sparkline--${trend}" viewBox="0 0 ${width} ${height}" role="img" aria-label="7-day price sparkline" data-spark="7-day">
+      <path class="sparkline-fill" d="${d} L ${last.x.toFixed(2)} ${baseline} L ${first.x.toFixed(2)} ${baseline} Z"></path>
+      <path class="sparkline-line" d="${d}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
     </svg>
   `;
 }

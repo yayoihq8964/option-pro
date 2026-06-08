@@ -20,9 +20,12 @@ export function renderChart(container, data = {}, visibleBars = 0, options = {})
     return null;
   }
   const hasExtendedBars = bars.some(b => b.extended);
+  const viewport = document.createElement('div');
+  viewport.className = 'chart-viewport';
+  container.appendChild(viewport);
 
-  const chart = LightweightCharts.createChart(container, {
-    height: container.clientHeight || 400,
+  const chart = LightweightCharts.createChart(viewport, {
+    height: viewport.clientHeight || Math.max((container.clientHeight || 400) - 26, 320),
     layout: { background: { color: 'transparent' }, textColor: '#747571', fontFamily: 'Manrope, system-ui' },
     grid: { vertLines: { color: 'transparent' }, horzLines: { color: 'rgba(20,22,25,0.055)' } },
     rightPriceScale: {
@@ -32,6 +35,7 @@ export function renderChart(container, data = {}, visibleBars = 0, options = {})
     timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   });
+  let liveDotHandle = null;
 
   if (mode === 'line') {
     const closeSeries = chart.addLineSeries({
@@ -44,6 +48,8 @@ export function renderChart(container, data = {}, visibleBars = 0, options = {})
       ...(LightweightCharts.LineType?.Curved != null ? { lineType: LightweightCharts.LineType.Curved } : {}),
     });
     closeSeries.setData(bars.map(b => ({ time: b.time, value: b.close })));
+    const lastBar = bars[bars.length - 1];
+    liveDotHandle = mountLivePriceDot(viewport, chart, closeSeries, { time: lastBar.time, value: lastBar.close });
   } else {
     // Candlestick series
     const candleSeries = chart.addCandlestickSeries({
@@ -123,28 +129,64 @@ export function renderChart(container, data = {}, visibleBars = 0, options = {})
 
   // Responsive
   const resize = () => chart.applyOptions({
-    width: container.clientWidth,
-    height: container.clientHeight || 400,
+    width: viewport.clientWidth,
+    height: viewport.clientHeight || Math.max((container.clientHeight || 400) - 26, 320),
   });
+  const updateLayout = () => {
+    resize();
+    liveDotHandle?.update?.();
+  };
   resize();
-  const ro = new ResizeObserver(resize);
+  const ro = new ResizeObserver(updateLayout);
   ro.observe(container);
 
   // Legend
   const legend = document.createElement('div');
-  legend.className = 'flex gap-4 text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-tight mt-2 px-1';
+  legend.className = 'chart-legend';
   legend.innerHTML = mode === 'line'
-    ? '<span class="flex items-center gap-1.5"><span class="w-5 h-1 rounded inline-block" style="background:#008c72"></span>CLOSE</span>'
+    ? '<span class="chart-legend__item"><span class="chart-legend__swatch chart-legend__swatch--close"></span>CLOSE</span>'
     : `
-      <span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded inline-block" style="background:#2d66c3"></span>EMA 20</span>
-      <span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded inline-block" style="background:#747571;border-top:2px dashed #747571;height:0"></span>SMA 50</span>
-      ${hasExtendedBars ? '<span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded inline-block" style="background:rgba(20,22,25,.28)"></span>EXT 盘前/盘后</span>' : ''}
+      <span class="chart-legend__item"><span class="chart-legend__swatch" style="background:#2d66c3"></span>EMA 20</span>
+      <span class="chart-legend__item"><span class="chart-legend__swatch chart-legend__swatch--dash"></span>SMA 50</span>
+      ${hasExtendedBars ? '<span class="chart-legend__item"><span class="chart-legend__swatch" style="background:rgba(20,22,25,.28)"></span>EXT 盘前/盘后</span>' : ''}
     `;
   container.appendChild(legend);
 
   return {
     chart,
-    destroy: () => { ro.disconnect(); chart.remove(); },
+    destroy: () => { liveDotHandle?.dispose?.(); ro.disconnect(); chart.remove(); },
+  };
+}
+
+function mountLivePriceDot(viewport, chart, series, point) {
+  const dot = document.createElement('span');
+  dot.className = 'live-price-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  viewport.appendChild(dot);
+
+  const update = () => {
+    const x = chart.timeScale().timeToCoordinate(point.time);
+    const y = series.priceToCoordinate(point.value);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      dot.hidden = true;
+      return;
+    }
+    dot.hidden = false;
+    dot.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+  };
+
+  const timeScale = chart.timeScale();
+  timeScale.subscribeVisibleLogicalRangeChange?.(update);
+  timeScale.subscribeVisibleTimeRangeChange?.(update);
+  requestAnimationFrame(update);
+
+  return {
+    update,
+    dispose() {
+      timeScale.unsubscribeVisibleLogicalRangeChange?.(update);
+      timeScale.unsubscribeVisibleTimeRangeChange?.(update);
+      dot.remove();
+    }
   };
 }
 
