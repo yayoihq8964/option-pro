@@ -1,11 +1,13 @@
 import { api, safe } from '../api.js';
 import { renderChart } from '../components/chart.js';
+import { getPrimaryMarketStatus } from '../components/marketStatus.js';
 import { renderTopBottomSignals } from '../components/topBottomSignals.js';
 import { renderOptionChain, renderAlerts } from '../components/optionChain.js';
 import { renderAlertAnalysisButton } from '../components/aiAnalysis.js';
 
 const TIMEFRAMES = [ ['5m','5分'], ['15m','15分'], ['1h','1时'], ['1d','日K'], ['1w','周K'] ];
 const CHART_REFRESH_MS = 5 * 60 * 1000;
+const CHART_MODE_KEY = 'option-pro:detail-chart-mode';
 
 const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const money = (n) => n == null || Number.isNaN(Number(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -37,6 +39,32 @@ const logoCandidates = (stock) => {
   return [...new Set(urls)];
 };
 
+const readChartMode = () => {
+  try {
+    return localStorage.getItem(CHART_MODE_KEY) === 'line' ? 'line' : 'candles';
+  } catch (_) {
+    return 'candles';
+  }
+};
+
+const writeChartMode = (mode) => {
+  try {
+    localStorage.setItem(CHART_MODE_KEY, mode);
+  } catch (_) {
+    // Local storage may be unavailable in private or restricted contexts.
+  }
+};
+
+const chartModeMeta = (mode) => mode === 'line'
+  ? { icon: 'candlestick_chart', title: '切换为K线' }
+  : { icon: 'show_chart', title: '切换为线图' };
+
+const marketStatusIcon = (status) => {
+  if (status?.tone === 'live') return 'wb_sunny';
+  if (status?.tone === 'pre') return 'schedule';
+  return 'dark_mode';
+};
+
 // Track the "active" mount so older mountDetail calls can detect they've been
 // superseded and bail out of late cleanups. Each mount captures its own
 // local handle + timer in closure — no shared mutable state.
@@ -53,7 +81,13 @@ function renderShell(ticker) {
     <div id="modal-stats" style="display:grid;gap:16px"></div>
 
     <div class="detail-chart-wrap panel" style="padding:20px">
-      <div id="tf-buttons" class="ethos-timeframe-row" style="margin-bottom:16px"></div>
+      <div class="detail-chart-control-row">
+        <div id="tf-buttons" class="ethos-timeframe-row"></div>
+        <button id="chart-mode-toggle" class="chart-mode-toggle" type="button" aria-pressed="false" title="切换为线图">
+          <span class="material-symbols-outlined" aria-hidden="true">show_chart</span>
+          <span class="sr-only">切换图表类型</span>
+        </button>
+      </div>
       <div id="modal-chart" style="height:420px;min-height:420px"></div>
     </div>
 
@@ -66,12 +100,22 @@ function renderShell(ticker) {
 }
 
 function renderHeaderAndStats(stock) {
-  const pct = Number(stock.change_percent ?? 0), ch = Number(stock.change ?? 0);
-  const pos = pct > 0, neg = pct < 0;
+  const hasPrice = stock.price != null && Number.isFinite(Number(stock.price));
+  const hasChange = stock.change_percent != null && Number.isFinite(Number(stock.change_percent));
+  const pct = hasChange ? Number(stock.change_percent) : 0;
+  const ch = stock.change != null && Number.isFinite(Number(stock.change)) ? Number(stock.change) : 0;
+  const pos = hasChange && pct > 0, neg = hasChange && pct < 0;
   const toneClass = pos ? 'up' : neg ? 'down' : '';
   const initial = (stock.ticker || '?')[0];
   const logos = logoCandidates(stock);
   const logoUrl = logos[0] || '';
+  const priceText = hasPrice ? Number(stock.price).toLocaleString(undefined,{maximumFractionDigits:2}) : '—';
+  const changeText = hasChange ? `${pos?'+':''}${pct.toFixed(2)}% (${pos?'+':''}$${Math.abs(ch).toFixed(2)})` : '行情加载中';
+  const titleText = stock.name || stock.ticker;
+  const showTicker = String(titleText || '').trim().toUpperCase() !== String(stock.ticker || '').trim().toUpperCase();
+  const marketStatus = getPrimaryMarketStatus();
+  const sessionIcon = marketStatusIcon(marketStatus);
+  const sessionTitle = `${marketStatus.phase} · ${marketStatus.nextEventLabel}: ${marketStatus.nextEventMarketText} · 本地 ${marketStatus.nextEventLocalText}`;
 
   document.getElementById('modal-header').innerHTML = `
     <div class="detail-stock-header">
@@ -82,15 +126,19 @@ function renderHeaderAndStats(stock) {
         </div>
         <div style="min-width:0">
           <h1 style="margin:0;font-size:24px;font-weight:800;letter-spacing:-.04em">
-            ${esc(stock.name || stock.ticker)}
-            <span style="font-family:'JetBrains Mono';font-size:14px;color:var(--color-muted);font-weight:700;margin-left:8px">${esc(stock.ticker)}</span>
+            ${esc(titleText)}
+            ${showTicker ? `<span style="font-family:'JetBrains Mono';font-size:14px;color:var(--color-muted);font-weight:700;margin-left:8px">${esc(stock.ticker)}</span>` : ''}
           </h1>
           <p style="margin:6px 0 0;color:var(--color-muted);font-size:13px;line-height:1.5">${esc(stock.description || `${stock.name || stock.ticker} · 行情、技术信号与期权链分析`)}</p>
         </div>
       </div>
       <div class="detail-market-price">
-        <strong class="mono">${Number(stock.price || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</strong>
-        <span class="mono ${toneClass}">${pos?'+':''}${pct.toFixed(2)}% (${pos?'+':''}$${Math.abs(ch).toFixed(2)})</span>
+        <div class="detail-price-line">
+          <strong class="mono">${priceText}</strong>
+          <span class="material-symbols-outlined detail-price-session detail-price-session--${esc(marketStatus.tone)}" title="${esc(sessionTitle)}" aria-label="${esc(sessionTitle)}">${sessionIcon}</span>
+        </div>
+        <span class="mono ${toneClass}">${changeText}</span>
+        <small class="detail-market-next">${esc(marketStatus.nextEventLabel)} ${esc(marketStatus.nextEventMarketText)} · 本地 ${esc(marketStatus.nextEventLocalText)}</small>
       </div>
     </div>`;
   document.querySelectorAll('[data-company-logo]').forEach((img) => {
@@ -179,7 +227,7 @@ async function loadChart(ticker, range, state) {
     el.innerHTML = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--color-crimson);font-size:14px">K线加载失败</div>';
     return;
   }
-  state.chartHandle = renderChart(el, data, data.visible || 0);
+  state.chartHandle = renderChart(el, data, data.visible || 0, { mode: state.chartMode });
 }
 
 async function loadOptionAlertsAndChain(ticker, state) {
@@ -245,7 +293,7 @@ export async function mountDetail(tickerFromRoute) {
   // Per-mount state in closure. Older mounts can still run cleanup on their
   // own state without trampling on this mount.
   const mountId = ++__activeMountId;
-  const state = { cancelled: false, chartHandle: null, refreshTimer: null };
+  const state = { cancelled: false, chartHandle: null, refreshTimer: null, chartMode: readChartMode() };
 
   const app = document.getElementById('app');
   app.innerHTML = renderShell(ticker);
@@ -270,7 +318,34 @@ export async function mountDetail(tickerFromRoute) {
     await loadChart(ticker, currentRange, state);
   });
 
+  const chartModeButton = document.getElementById('chart-mode-toggle');
+  const drawChartMode = () => {
+    if (!chartModeButton) return;
+    const meta = chartModeMeta(state.chartMode);
+    chartModeButton.title = meta.title;
+    chartModeButton.setAttribute('aria-label', meta.title);
+    chartModeButton.setAttribute('aria-pressed', state.chartMode === 'line' ? 'true' : 'false');
+    chartModeButton.innerHTML = `
+      <span class="material-symbols-outlined" aria-hidden="true">${meta.icon}</span>
+      <span class="sr-only">${meta.title}</span>
+    `;
+  };
+  drawChartMode();
+  chartModeButton?.addEventListener('click', async () => {
+    if (state.cancelled) return;
+    state.chartMode = state.chartMode === 'line' ? 'candles' : 'line';
+    writeChartMode(state.chartMode);
+    drawChartMode();
+    await loadChart(ticker, currentRange, state);
+  });
+
   // Header + stats
+  renderHeaderAndStats({
+    ticker,
+    name: ticker,
+    name_en: ticker,
+    description: '行情、技术信号与期权链分析'
+  });
   safe(api.stock(ticker)).then(d => {
     if (state.cancelled) return;
     if (!d.__error) renderHeaderAndStats(d);
