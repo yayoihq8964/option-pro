@@ -17,18 +17,19 @@ function gauge(title, score, label, reasons = null) {
   const color = scoreBarColor(s);
   const raising = reasons?.raising || [];
   const suppressing = reasons?.suppressing || [];
-  return `<div class="panel" style="padding:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+  const chips = [
+    ...raising.slice(0, 2).map((r) => ({ tone: 'raise', text: r })),
+    ...(!raising.length ? suppressing.slice(0, 1).map((r) => ({ tone: 'mute', text: r })) : [])
+  ];
+  return `<div class="tb-card" style="--score:${s};--score-color:${color}">
+    <div class="tb-card__top">
       <span class="label-caps">${esc(title)}</span>
-      <span class="mono" style="font-size:22px;font-weight:800;letter-spacing:-.02em">${Math.round(s)}<span class="label-caps" style="color:var(--color-muted);margin-left:4px;font-size:10px">/100</span></span>
+      <strong class="mono">${Math.round(s)}<small>/100</small></strong>
     </div>
-    <div style="height:6px;border-radius:999px;background:var(--color-container);overflow:hidden;margin-bottom:10px">
-      <div style="height:100%;width:${s}%;background:${color};border-radius:999px;transition:width .3s"></div>
-    </div>
-    <p style="margin:0 0 ${(raising.length || suppressing.length) ? '10px' : '0'};font-size:12px;font-weight:700;color:var(--color-muted)">${esc(label || '')}</p>
-    ${(raising.length || suppressing.length) ? `<div style="display:grid;gap:6px;font-size:11px;line-height:1.5">
-      ${raising.length ? `<p style="margin:0;color:var(--color-on-surface)"><b>抬高因素:</b> ${raising.map(esc).join('，')}</p>` : ''}
-      ${suppressing.length ? `<p style="margin:0;color:var(--color-muted)"><b>压低因素:</b> ${suppressing.map(esc).join('，')}</p>` : ''}
+    <div class="tb-card__meter"><span></span></div>
+    <p>${esc(label || '')}</p>
+    ${chips.length ? `<div class="tb-card__chips">
+      ${chips.map((chip) => `<span class="tb-chip tb-chip--${chip.tone}">${esc(chip.text)}</span>`).join('')}
     </div>` : ''}
   </div>`;
 }
@@ -82,29 +83,29 @@ export function renderTopBottomSignals(container, ticker, data) {
   const preferred = ['rsi14','sma20_dist','sma50_dist','return_20d','volume_zscore','macd_hist','relative_strength_spy','iv_rank','close_position','obv_divergence'];
   const rows = preferred.filter(k => signals[k]).map(k => {
     const s = signals[k];
-    return `<li style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--color-border);font-size:13px"><span style="font-weight:700">${esc(s.label || k)}</span><span class="mono" style="color:var(--color-muted)">${fmt(s.value, k.includes('macd') ? 4 : 1)} → ${interpret(k, s)}</span></li>`;
+    return `<li><span>${esc(s.label || k)}</span><strong class="mono">${fmt(s.value, k.includes('macd') ? 4 : 1)} → ${interpret(k, s)}</strong></li>`;
   }).join('');
 
-  container.innerHTML = `<div class="panel" style="padding:20px;display:grid;gap:16px">
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+  container.innerHTML = `<div class="tb-shell">
+    <div class="tb-shell__header">
       <div>
         <span class="label-caps">Top / Bottom Signal Analysis</span>
-        <h3 style="margin:6px 0 0;font-size:20px;font-weight:800;letter-spacing:-.03em">顶底信号分析</h3>
-        <p style="margin:4px 0 0;font-size:11px;font-weight:700;color:var(--color-muted)">预测窗口：5-20 交易日 · 周期：日线</p>
+        <h3>顶底信号分析</h3>
+        <p>5-20 交易日 · 日线周期</p>
       </div>
-      <span class="label-caps" style="color:var(--color-muted)">as of ${esc(data.as_of || '')}${data._cached ? ' · cached' : ''}</span>
+      <span class="tb-shell__time">as of ${esc(data.as_of || '')}${data._cached ? ' · cached' : ''}</span>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+    <div class="tb-card-grid">
       ${gauge('趋势偏向', data.trend_bias_score ?? 50, data.trend_bias_label || '中性')}
       ${gauge('顶部风险', scores.top_score, scores.top_label, scores.top_reasons)}
       ${gauge('底部机会', scores.bottom_score, scores.bottom_label, scores.bottom_reasons)}
       ${gauge('回调买点', scores.dip_buy_quality, scores.dip_buy_label, { raising: scores.dip_buy_reasons || [], suppressing: [] })}
     </div>
-    <details open style="padding:14px;background:var(--color-surface);border:1px solid var(--color-border);border-radius:6px">
-      <summary class="label-caps" style="cursor:pointer">Signal Breakdown · 信号明细</summary>
-      <ul style="margin:10px 0 0;padding:0;list-style:none">${rows}</ul>
+    <details class="tb-breakdown">
+      <summary>Signal Breakdown · 信号明细</summary>
+      <ul>${rows}</ul>
     </details>
-    <button id="tb-ai-btn" class="ai-analysis-button" style="width:100%;justify-content:center;display:inline-flex;align-items:center;gap:8px">
+    <button id="tb-ai-btn" class="ai-analysis-button tb-ai-button">
       <span class="material-symbols-outlined" style="font-size:18px">psychology</span> AI 深度分析
     </button>
     <div id="tb-ai-result" style="display:none"></div>

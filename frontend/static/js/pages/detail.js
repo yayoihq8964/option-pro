@@ -10,6 +10,14 @@ const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&
 const money = (n) => n == null || Number.isNaN(Number(n)) ? '—' : `$${Number(n).toFixed(2)}`;
 const large = (n) => n == null ? '—' : n >= 1e12 ? `$${(n/1e12).toFixed(2)}T` : n >= 1e9 ? `$${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n/1e6).toFixed(1)}M` : `$${Number(n).toLocaleString()}`;
 const num = (n) => n == null ? '—' : Number(n).toLocaleString();
+const safeUrl = (v) => {
+  try {
+    const url = new URL(String(v || ''));
+    return url.protocol === 'https:' ? url.href : '';
+  } catch (_) {
+    return '';
+  }
+};
 
 // Track the "active" mount so older mountDetail calls can detect they've been
 // superseded and bail out of late cleanups. Each mount captures its own
@@ -44,11 +52,15 @@ function renderHeaderAndStats(stock) {
   const pos = pct > 0, neg = pct < 0;
   const toneClass = pos ? 'up' : neg ? 'down' : '';
   const initial = (stock.ticker || '?')[0];
+  const logoUrl = safeUrl(stock.logo_url);
 
   document.getElementById('modal-header').innerHTML = `
     <div class="detail-stock-header">
       <div style="display:flex;align-items:flex-start;gap:16px;flex:1;min-width:0">
-        <div class="detail-logo">${esc(initial)}</div>
+        <div class="detail-logo" data-logo-shell>
+          ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(stock.name_en || stock.ticker)} logo" loading="lazy" referrerpolicy="no-referrer" data-company-logo>` : ''}
+          <span data-logo-fallback>${esc(initial)}</span>
+        </div>
         <div style="min-width:0">
           <h1 style="margin:0;font-size:24px;font-weight:800;letter-spacing:-.04em">
             ${esc(stock.name || stock.ticker)}
@@ -62,6 +74,10 @@ function renderHeaderAndStats(stock) {
         <span class="mono ${toneClass}">${pos?'+':''}${pct.toFixed(2)}% (${pos?'+':''}$${Math.abs(ch).toFixed(2)})</span>
       </div>
     </div>`;
+  document.querySelectorAll('[data-company-logo]').forEach((img) => {
+    img.addEventListener('load', () => img.closest('[data-logo-shell]')?.classList.add('has-logo'), { once: true });
+    img.addEventListener('error', () => img.closest('[data-logo-shell]')?.classList.add('logo-failed'), { once: true });
+  });
 
   const quickStats = [
     ['Open', money(stock.open ?? stock.o)],
@@ -120,7 +136,7 @@ async function loadOptionAlertsAndChain(ticker, state) {
   // Render alerts + AI button at top
   const alerts = chain?.alerts || [];
   if (alerts.length > 0) {
-    alertsSection.innerHTML = `<div class="panel" style="padding:20px">${renderAlerts(alerts)}<div id="ai-analysis-mount"></div></div>`;
+    alertsSection.innerHTML = `<section class="option-alert-section">${renderAlerts(alerts)}<div id="ai-analysis-mount"></div></section>`;
     renderAlertAnalysisButton(document.getElementById('ai-analysis-mount'), ticker, alerts, chain.underlying_price || 0, selected);
   } else {
     alertsSection.innerHTML = '';
@@ -149,7 +165,7 @@ async function loadOptionAlertsAndChain(ticker, state) {
       // Re-render alerts for new expiration
       const newAlerts = newChain.alerts || [];
       if (newAlerts.length > 0) {
-        alertsSection.innerHTML = `<div class="panel" style="padding:20px">${renderAlerts(newAlerts)}<div id="ai-analysis-mount"></div></div>`;
+        alertsSection.innerHTML = `<section class="option-alert-section">${renderAlerts(newAlerts)}<div id="ai-analysis-mount"></div></section>`;
         renderAlertAnalysisButton(document.getElementById('ai-analysis-mount'), ticker, newAlerts, newChain.underlying_price || 0, exp);
       } else {
         alertsSection.innerHTML = '';

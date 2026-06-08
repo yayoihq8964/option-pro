@@ -37,59 +37,53 @@ export function renderAlerts(alerts = []) {
     const dir = a.inferred_direction || a.signal || 'unknown';
     if (dir === 'bullish') return {
       icon: 'trending_up',
-      bg: '#ecfdf5',
-      accent: 'var(--color-emerald)',
-      chipBg: '#dff5ec',
+      tone: 'bullish',
       label: '方向推断偏多'
     };
     if (dir === 'bearish') return {
       icon: 'trending_down',
-      bg: '#fef2f2',
-      accent: 'var(--color-crimson)',
-      chipBg: '#ffdad6',
+      tone: 'bearish',
       label: '方向推断偏空'
     };
     return {
       icon: 'help',
-      bg: 'var(--color-surface)',
-      accent: 'var(--color-muted)',
-      chipBg: 'var(--color-container)',
+      tone: 'neutral',
       label: '方向未知'
     };
   };
 
-  return `<div style="display:grid;gap:12px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <span class="label-caps" style="display:inline-flex;align-items:center;gap:6px">
-        <span class="material-symbols-outlined" style="font-size:14px">notifications_active</span>
-        异动信号
-      </span>
-      <span class="label-caps" style="color:var(--color-muted);font-weight:700">方向推断 · 非确定性判断</span>
+  return `<div class="option-alert-shell">
+    <div class="option-alert-head">
+      <div>
+        <span class="label-caps">Unusual Flow</span>
+        <h3>期权异动</h3>
+      </div>
+      <span>方向推断 · 非确定性判断</span>
     </div>
-    <div style="display:grid;gap:8px">
+    <div class="option-alert-grid">
       ${alerts.map(a => {
         const m = meta(a);
         const expText = a.expiration ? `${String(a.expiration).slice(5).replace('-', '/')}到期` : '到期日—';
-        return `<div style="display:flex;align-items:flex-start;gap:12px;padding:14px;background:${m.bg};border:1px solid var(--color-border);border-radius:8px">
-          <div style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:8px;background:${m.chipBg};color:${m.accent};flex-shrink:0">
+        return `<article class="option-alert-card option-alert-card--${m.tone}">
+          <div class="option-alert-card__icon">
             <span class="material-symbols-outlined" style="font-size:18px">${m.icon}</span>
           </div>
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-              <strong class="mono" style="font-size:13px;font-weight:800;color:var(--color-on-surface)">${a.type === 'call' ? 'CALL' : 'PUT'} ${money(a.strike)}</strong>
-              <span class="label-caps" style="color:var(--color-muted)">${esc(expText)} · DTE ${esc(a.dte ?? '—')}</span>
-              <span class="label-caps" style="background:#fff;border:1px solid var(--color-border);color:${m.accent};padding:3px 7px;border-radius:999px">${m.label}</span>
+          <div class="option-alert-card__body">
+            <div class="option-alert-card__top">
+              <strong class="mono">${a.type === 'call' ? 'CALL' : 'PUT'} ${money(a.strike)}</strong>
+              <span>${m.label}</span>
             </div>
-            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:6px;font-size:12px;color:var(--color-muted)">
+            <p>${esc(expText)} · DTE ${esc(a.dte ?? '—')}</p>
+            <div class="option-alert-card__metrics">
               <span class="mono">Vol ${int(a.volume)}</span>
               <span class="mono">OI ${int(a.open_interest)}</span>
-              ${a.premium_flow ? `<span class="mono" style="color:${m.accent};font-weight:700">$${Number(a.premium_flow).toLocaleString()}</span>` : ''}
+              ${a.premium_flow ? `<strong class="mono">$${Number(a.premium_flow).toLocaleString()}</strong>` : ''}
             </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
-              ${(a.reasons || []).map(r => `<span style="padding:3px 7px;background:#fff;border:1px solid var(--color-border);border-radius:4px;font-size:10px;font-weight:700;color:var(--color-muted)">${esc(r)}</span>`).join('')}
-            </div>
+            ${(a.reasons || []).length ? `<div class="option-alert-card__reasons">
+              ${(a.reasons || []).slice(0, 3).map(r => `<span>${esc(r)}</span>`).join('')}
+            </div>` : ''}
           </div>
-        </div>`;
+        </article>`;
       }).join('')}
     </div>
   </div>`;

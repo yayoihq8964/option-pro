@@ -4,6 +4,7 @@ import asyncio
 import math
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import yfinance as yf
 from fastapi import APIRouter, Query
@@ -384,6 +385,20 @@ async def stock_overview(ticker: str):
 
 
 async def _stock_overview_impl(ticker: str):
+    def _logo_url_from_website(website: str | None) -> str | None:
+        if not website:
+            return None
+        try:
+            parsed = urlparse(website if "://" in website else f"https://{website}")
+            host = (parsed.netloc or "").lower().split("@")[-1].split(":")[0]
+            if host.startswith("www."):
+                host = host[4:]
+            if "." not in host:
+                return None
+            return f"https://logo.clearbit.com/{host}"
+        except Exception:
+            return None
+
     def _work():
         tk = yf.Ticker(ticker.upper())
         info = tk.info
@@ -392,10 +407,13 @@ async def _stock_overview_impl(ticker: str):
         prev_close = float(fi.previous_close)
         from app.services.zh_names import get_zh_info
         zh = get_zh_info(ticker.upper())
+        website = info.get("website")
         return {
             "ticker": ticker.upper(),
             "name": zh.get("name_zh") or info.get("shortName", ticker.upper()),
             "name_en": info.get("shortName", ticker.upper()),
+            "website": website,
+            "logo_url": _logo_url_from_website(website),
             "price": round(last_price, 2),
             "change": round(last_price - prev_close, 2),
             "change_percent": round((last_price - prev_close) / prev_close * 100, 2) if prev_close else 0,
