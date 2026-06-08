@@ -534,6 +534,34 @@ _CHART_TTL = {"5m": 300, "15m": 300, "1h": 300, "1d": 300, "1w": 300}
 _NEW_YORK_TZ = ZoneInfo("America/New_York")
 
 
+def _normalize_extended_quote_bar(
+    bar: dict[str, Any],
+    reference_close: float | None = None,
+) -> dict[str, Any] | None:
+    """Yahoo extended-hours bars often carry quote-only high/low spikes.
+
+    With zero reported volume, treat the bar as a quote path and draw only
+    open/close. This keeps pre/post-market movement without letting bad
+    high/low ticks flatten the whole chart scale.
+    """
+    if int(bar.get("v") or 0) > 0:
+        return bar
+    body_high = max(float(bar["o"]), float(bar["c"]))
+    body_low = min(float(bar["o"]), float(bar["c"]))
+    if body_low <= 0:
+        return None
+    if (body_high - body_low) / body_low > 0.08:
+        return None
+    if reference_close and reference_close > 0:
+        ref_move = max(abs(float(bar["o"]) / reference_close - 1), abs(float(bar["c"]) / reference_close - 1))
+        if ref_move > 0.20:
+            return None
+    bar["h"] = round(body_high, 2)
+    bar["l"] = round(body_low, 2)
+    bar["quote_only"] = True
+    return bar
+
+
 @router.get("/{ticker}/chart")
 async def stock_chart(ticker: str, range: str = Query("1d", pattern="^(5m|15m|1h|1d|1w)$")):
     return await _cached_endpoint(
@@ -595,6 +623,7 @@ async def _stock_chart_impl(ticker: str, range: str):
         # them so the frontend can visually distinguish pre/post-market.
         if prepost:
             filtered = []
+            last_close = None
             for b in raw_bars:
                 hour_min = b.pop("_ny_min", None)
                 if hour_min is None:
@@ -606,10 +635,14 @@ async def _stock_chart_impl(ticker: str, range: str):
                 if is_regular:
                     b["session"] = "regular"
                     filtered.append(b)
+                    last_close = float(b["c"])
                 else:
                     b["ext"] = True
                     b["session"] = "pre" if hour_min < 570 else "post"
-                    filtered.append(b)
+                    cleaned = _normalize_extended_quote_bar(b, last_close)
+                    if cleaned is not None:
+                        filtered.append(cleaned)
+                        last_close = float(cleaned["c"])
             bars = filtered
         else:
             bars = raw_bars

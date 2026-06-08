@@ -139,9 +139,20 @@ function normalizeBars(bars) {
       close: Number(b.c ?? b.close),
       volume: Number(b.v ?? b.volume ?? 0),
       extended: Boolean(b.ext ?? b.extended),
+      quoteOnly: Boolean(b.quote_only ?? b.quoteOnly),
       session: String(b.session || ''),
     }))
-    .filter(b => Number.isFinite(b.time) && Number.isFinite(b.close) && b.time > 0)
+    .filter(b => (
+      Number.isFinite(b.time) &&
+      Number.isFinite(b.open) &&
+      Number.isFinite(b.high) &&
+      Number.isFinite(b.low) &&
+      Number.isFinite(b.close) &&
+      b.time > 0 &&
+      b.low > 0 &&
+      b.high >= Math.max(b.open, b.close) &&
+      b.low <= Math.min(b.open, b.close)
+    ))
     .sort((a, b) => a.time - b.time);
 }
 
