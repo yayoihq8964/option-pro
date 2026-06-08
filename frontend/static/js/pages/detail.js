@@ -12,14 +12,15 @@ const large = (n) => n == null ? '—' : n >= 1e12 ? `$${(n/1e12).toFixed(2)}T` 
 const num = (n) => n == null ? '—' : Number(n).toLocaleString();
 const safeUrl = (v) => {
   try {
-    const url = new URL(String(v || ''));
-    return url.protocol === 'https:' ? url.href : '';
+    const url = new URL(String(v || ''), window.location.origin);
+    return url.origin === window.location.origin || url.protocol === 'https:' ? url.href : '';
   } catch (_) {
     return '';
   }
 };
 const logoCandidates = (stock) => {
   const ticker = String(stock?.ticker || '').trim().toUpperCase();
+  const proxiedLogo = ticker ? `/api/stocks/${encodeURIComponent(ticker)}/logo` : '';
   const apiUrls = Array.isArray(stock?.logo_urls) ? stock.logo_urls : [];
   const tickerUrls = [
     ticker ? `https://financialmodelingprep.com/image-stock/${encodeURIComponent(ticker)}.png` : '',
@@ -27,6 +28,7 @@ const logoCandidates = (stock) => {
     ticker ? `https://eodhd.com/img/logos/US/${encodeURIComponent(ticker)}.png` : '',
   ];
   const urls = [
+    proxiedLogo,
     ...(apiUrls.length ? apiUrls : tickerUrls),
     stock?.logo_url,
     ...(apiUrls.length ? tickerUrls : []),
@@ -92,19 +94,37 @@ function renderHeaderAndStats(stock) {
     </div>`;
   document.querySelectorAll('[data-company-logo]').forEach((img) => {
     const shell = img.closest('[data-logo-shell]');
+    let logoTimer = null;
+    const clearLogoTimer = () => {
+      if (logoTimer) {
+        clearTimeout(logoTimer);
+        logoTimer = null;
+      }
+    };
+    const armLogoTimeout = () => {
+      clearLogoTimer();
+      logoTimer = setTimeout(() => {
+        if (!img.complete || img.naturalWidth <= 2 || img.naturalHeight <= 2) {
+          tryNextLogo();
+        }
+      }, 3200);
+    };
     const tryNextLogo = () => {
+      clearLogoTimer();
       const urls = (img.dataset.logoUrls || '').split('|').filter(Boolean);
       const nextIndex = Number(img.dataset.logoIndex || 0) + 1;
       if (nextIndex < urls.length) {
         img.dataset.logoIndex = String(nextIndex);
         shell?.classList.remove('logo-failed', 'has-logo');
         img.src = urls[nextIndex];
+        armLogoTimeout();
         return;
       }
       shell?.classList.remove('has-logo');
       shell?.classList.add('logo-failed');
     };
     const markLogoLoaded = () => {
+      clearLogoTimer();
       if (img.naturalWidth <= 2 || img.naturalHeight <= 2) {
         tryNextLogo();
         return;
@@ -117,6 +137,8 @@ function renderHeaderAndStats(stock) {
     if (img.complete) {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) markLogoLoaded();
       else tryNextLogo();
+    } else {
+      armLogoTimeout();
     }
   });
 

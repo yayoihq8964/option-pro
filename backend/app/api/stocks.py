@@ -6,8 +6,9 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 import yfinance as yf
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
 
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
@@ -53,6 +54,67 @@ async def _cached_endpoint(key: str, ttl: int, loader):
 
 
 from app.services.utils import sanitize as _sanitize
+
+_LOGO_MEDIA_TYPES = {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}
+
+
+def _website_host(website: str | None) -> str | None:
+    if not website:
+        return None
+    try:
+        parsed = urlparse(website if "://" in website else f"https://{website}")
+        host = (parsed.netloc or "").lower().split("@")[-1].split(":")[0]
+        if host.startswith("www."):
+            host = host[4:]
+        if "." not in host:
+            return None
+        return host
+    except Exception:
+        return None
+
+
+def _logo_symbol_variants(symbol: str) -> list[str]:
+    normalized = symbol.strip().upper()
+    if normalized.startswith("US."):
+        normalized = normalized[3:]
+    normalized = "".join(c for c in normalized if c.isalnum() or c in {".", "-"})
+    if not normalized:
+        return []
+    variants = [normalized]
+    if "." in normalized:
+        variants.append(normalized.replace(".", "-"))
+    return list(dict.fromkeys(variants))
+
+
+def _logo_urls(symbol: str, website: str | None = None) -> list[str]:
+    candidates = []
+    for variant in _logo_symbol_variants(symbol):
+        candidates.extend([
+            f"https://financialmodelingprep.com/image-stock/{variant}.png",
+            f"https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/{variant}.png",
+            f"https://eodhd.com/img/logos/US/{variant}.png",
+        ])
+    host = _website_host(website)
+    if host:
+        candidates.append(f"https://logo.clearbit.com/{host}")
+    return list(dict.fromkeys(candidates))
+
+
+async def _fetch_company_logo(symbol: str) -> dict[str, Any]:
+    headers = {
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (compatible; OptixPro/1.0)",
+    }
+    async with httpx.AsyncClient(follow_redirects=True, timeout=6.0, headers=headers) as client:
+        for url in _logo_urls(symbol):
+            try:
+                resp = await client.get(url)
+            except Exception:
+                continue
+            media_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            if resp.status_code == 200 and media_type in _LOGO_MEDIA_TYPES and len(resp.content) > 64:
+                return {"content": resp.content, "media_type": media_type, "source": url}
+    raise HTTPException(status_code=404, detail="Company logo not found")
 
 
 KNOWN_TICKERS = {
@@ -379,37 +441,28 @@ async def stock_signals(ticker: str):
     return _sanitize(result)
 
 
+@router.get("/{ticker}/logo")
+async def stock_logo(ticker: str):
+    symbol = ticker.upper().strip()
+    if not _logo_symbol_variants(symbol):
+        raise HTTPException(status_code=404, detail="Invalid ticker")
+    logo = await _cached_endpoint(f"logo:{symbol}", 24 * 60 * 60, lambda: _fetch_company_logo(symbol))
+    return Response(
+        content=logo["content"],
+        media_type=logo["media_type"],
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-Logo-Source": logo["source"],
+        },
+    )
+
+
 @router.get("/{ticker}")
 async def stock_overview(ticker: str):
     return await _cached_endpoint(f"stock:{ticker.upper()}", 300, lambda: _stock_overview_impl(ticker))
 
 
 async def _stock_overview_impl(ticker: str):
-    def _website_host(website: str | None) -> str | None:
-        if not website:
-            return None
-        try:
-            parsed = urlparse(website if "://" in website else f"https://{website}")
-            host = (parsed.netloc or "").lower().split("@")[-1].split(":")[0]
-            if host.startswith("www."):
-                host = host[4:]
-            if "." not in host:
-                return None
-            return host
-        except Exception:
-            return None
-
-    def _logo_urls(symbol: str, website: str | None) -> list[str]:
-        host = _website_host(website)
-        candidates = [
-            f"https://financialmodelingprep.com/image-stock/{symbol}.png",
-            f"https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/{symbol}.png",
-            f"https://eodhd.com/img/logos/US/{symbol}.png",
-        ]
-        if host:
-            candidates.append(f"https://logo.clearbit.com/{host}")
-        return list(dict.fromkeys(candidates))
-
     def _work():
         symbol = ticker.upper()
         tk = yf.Ticker(symbol)
