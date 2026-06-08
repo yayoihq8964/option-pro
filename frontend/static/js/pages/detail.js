@@ -76,7 +76,7 @@ function renderHeaderAndStats(stock) {
     <div class="detail-stock-header">
       <div style="display:flex;align-items:flex-start;gap:16px;flex:1;min-width:0">
         <div class="detail-logo" data-logo-shell>
-          ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(stock.name_en || stock.ticker)} logo" loading="lazy" referrerpolicy="no-referrer" data-company-logo data-logo-index="0" data-logo-urls="${esc(logos.join('|'))}">` : ''}
+          ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(stock.name_en || stock.ticker)} logo" loading="eager" decoding="async" referrerpolicy="no-referrer" data-company-logo data-logo-index="0" data-logo-urls="${esc(logos.join('|'))}">` : ''}
           <span data-logo-fallback>${esc(initial)}</span>
         </div>
         <div style="min-width:0">
