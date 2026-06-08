@@ -371,6 +371,32 @@ a { color: inherit; }
 .terminal-sidebar { display: grid; gap: 16px; }
 .terminal-panel ul { display: grid; gap: 12px; margin: 16px 0 0; padding: 0; list-style: none; }
 .terminal-panel li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.terminal-panel-empty {
+  justify-content: flex-start !important;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.terminal-earnings-item { min-width: 0; }
+.terminal-earnings-ticker {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-on-surface);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+.terminal-earnings-ticker:hover { color: var(--color-emerald); }
+.terminal-earnings-date {
+  display: grid;
+  gap: 2px;
+  flex: 0 0 auto;
+  text-align: right;
+}
+.terminal-earnings-date span { font-size: 14px; font-weight: 900; color: var(--color-on-surface); }
+.terminal-earnings-date small { color: var(--color-muted); font-size: 11px; font-weight: 700; }
 
 .terminal-heatmap, .sector-section-card, .earnings-table-card {
   display: grid;

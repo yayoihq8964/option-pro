@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date, datetime
 import math
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 from fastapi import APIRouter
@@ -35,6 +37,9 @@ EARNINGS_TICKERS = [
 
 from app.services.utils import sanitize as _sanitize
 
+MARKET_TZ = ZoneInfo("America/New_York")
+MAX_EARNINGS_LOOKAHEAD_DAYS = 180
+
 
 def _to_optional_float(value: Any) -> float | None:
     try:
@@ -58,14 +63,113 @@ def _first(value: Any) -> Any:
     return value
 
 
+def _market_today() -> date:
+    return datetime.now(MARKET_TZ).date()
+
+
+def _coerce_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            value = value.astimezone(MARKET_TZ)
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            if value > 1_000_000:
+                return datetime.fromtimestamp(value, MARKET_TZ).date()
+        except Exception:
+            return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw or raw.lower() in {"nan", "nat", "none", "null", "-"}:
+            return None
+        if raw.isdigit():
+            return _coerce_date(int(raw))
+        try:
+            return date.fromisoformat(raw[:10])
+        except Exception:
+            return None
+    return None
+
+
+def _collect_dates(value: Any) -> list[date]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        dates: list[date] = []
+        for item in value:
+            dates.extend(_collect_dates(item))
+        return dates
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
+        try:
+            return _collect_dates(value.tolist())
+        except Exception:
+            pass
+    parsed = _coerce_date(value)
+    return [parsed] if parsed else []
+
+
+def _calendar_get(calendar: Any, key: str) -> Any:
+    if calendar is None:
+        return None
+    try:
+        if hasattr(calendar, "get"):
+            value = calendar.get(key)
+            if value is not None:
+                return value
+    except Exception:
+        pass
+    try:
+        if hasattr(calendar, "loc"):
+            return calendar.loc[key]
+    except Exception:
+        return None
+    return None
+
+
+def _earnings_dates_from_table(ticker_obj: yf.Ticker) -> list[date]:
+    table = None
+    try:
+        if hasattr(ticker_obj, "get_earnings_dates"):
+            table = ticker_obj.get_earnings_dates(limit=12)
+    except Exception:
+        table = None
+    if table is None:
+        try:
+            table = ticker_obj.earnings_dates
+        except Exception:
+            table = None
+    if table is None:
+        return []
+    try:
+        return _collect_dates(list(table.index))
+    except Exception:
+        return []
+
+
+def _next_future_date(candidates: list[date], today: date) -> date | None:
+    unique = sorted(set(candidates))
+    for candidate in unique:
+        days = (candidate - today).days
+        if 0 <= days <= MAX_EARNINGS_LOOKAHEAD_DAYS:
+            return candidate
+    return None
+
+
 @router.get("/upcoming")
 async def upcoming_earnings():
     """Fetch real upcoming earnings dates from Yahoo Finance."""
 
-    key = "earnings:upcoming"
+    today = _market_today()
+    key = f"earnings:upcoming:{today.isoformat()}"
     cached = cache.get(key)
     if cached:
         return _sanitize(cached)
+
+    sem = asyncio.Semaphore(8)
 
     async def fetch_one(ticker: str):
         def _work():
@@ -74,32 +178,41 @@ async def upcoming_earnings():
                 info = tk.info
                 name = info.get("shortName", ticker)
 
-                # earnings_dates requires lxml in some yfinance paths; calendar
-                # provides the upcoming date and estimate fields without it.
                 cal = tk.calendar
-                if cal is None:
-                    return None
 
-                earnings_dates = cal.get("Earnings Date", [])
-                next_raw = _first(earnings_dates)
-                if next_raw is None:
+                calendar_dates = _collect_dates(_calendar_get(cal, "Earnings Date"))
+                table_dates = _earnings_dates_from_table(tk)
+                timestamp_dates = []
+                timestamp_dates.extend(_collect_dates(info.get("earningsTimestamp")))
+                timestamp_dates.extend(_collect_dates(info.get("earningsTimestampStart")))
+                timestamp_dates.extend(_collect_dates(info.get("earningsTimestampEnd")))
+
+                next_date = (
+                    _next_future_date(calendar_dates, today)
+                    or _next_future_date(table_dates, today)
+                    or _next_future_date(timestamp_dates, today)
+                )
+                if next_date is None:
                     return None
+                earnings_date = next_date.isoformat()
 
                 return {
                     "ticker": ticker,
                     "name": name,
-                    "earnings_date": str(next_raw),
-                    "eps_estimate": _to_optional_float(cal.get("Earnings Average")),
-                    "eps_high": _to_optional_float(cal.get("Earnings High")),
-                    "eps_low": _to_optional_float(cal.get("Earnings Low")),
-                    "revenue_estimate": _to_optional_float(cal.get("Revenue Average")),
+                    "earnings_date": earnings_date,
+                    "days_until": (next_date - today).days,
+                    "eps_estimate": _to_optional_float(_first(_calendar_get(cal, "Earnings Average"))),
+                    "eps_high": _to_optional_float(_first(_calendar_get(cal, "Earnings High"))),
+                    "eps_low": _to_optional_float(_first(_calendar_get(cal, "Earnings Low"))),
+                    "revenue_estimate": _to_optional_float(_first(_calendar_get(cal, "Revenue Average"))),
                     "market_cap": _to_optional_float(info.get("marketCap")),
                     "sector": info.get("sector", ""),
                 }
             except Exception:
                 return None
 
-        return await asyncio.to_thread(_work)
+        async with sem:
+            return await asyncio.to_thread(_work)
 
     results = await asyncio.gather(*[fetch_one(t) for t in EARNINGS_TICKERS], return_exceptions=True)
     earnings = [r for r in results if isinstance(r, dict)]

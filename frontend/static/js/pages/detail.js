@@ -18,6 +18,21 @@ const safeUrl = (v) => {
     return '';
   }
 };
+const logoCandidates = (stock) => {
+  const ticker = String(stock?.ticker || '').trim().toUpperCase();
+  const apiUrls = Array.isArray(stock?.logo_urls) ? stock.logo_urls : [];
+  const tickerUrls = [
+    ticker ? `https://financialmodelingprep.com/image-stock/${encodeURIComponent(ticker)}.png` : '',
+    ticker ? `https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/${encodeURIComponent(ticker)}.png` : '',
+    ticker ? `https://eodhd.com/img/logos/US/${encodeURIComponent(ticker)}.png` : '',
+  ];
+  const urls = [
+    ...(apiUrls.length ? apiUrls : tickerUrls),
+    stock?.logo_url,
+    ...(apiUrls.length ? tickerUrls : []),
+  ].map(safeUrl).filter(Boolean);
+  return [...new Set(urls)];
+};
 
 // Track the "active" mount so older mountDetail calls can detect they've been
 // superseded and bail out of late cleanups. Each mount captures its own
@@ -52,13 +67,14 @@ function renderHeaderAndStats(stock) {
   const pos = pct > 0, neg = pct < 0;
   const toneClass = pos ? 'up' : neg ? 'down' : '';
   const initial = (stock.ticker || '?')[0];
-  const logoUrl = safeUrl(stock.logo_url);
+  const logos = logoCandidates(stock);
+  const logoUrl = logos[0] || '';
 
   document.getElementById('modal-header').innerHTML = `
     <div class="detail-stock-header">
       <div style="display:flex;align-items:flex-start;gap:16px;flex:1;min-width:0">
         <div class="detail-logo" data-logo-shell>
-          ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(stock.name_en || stock.ticker)} logo" loading="lazy" referrerpolicy="no-referrer" data-company-logo>` : ''}
+          ${logoUrl ? `<img src="${esc(logoUrl)}" alt="${esc(stock.name_en || stock.ticker)} logo" loading="lazy" referrerpolicy="no-referrer" data-company-logo data-logo-index="0" data-logo-urls="${esc(logos.join('|'))}">` : ''}
           <span data-logo-fallback>${esc(initial)}</span>
         </div>
         <div style="min-width:0">
@@ -75,8 +91,33 @@ function renderHeaderAndStats(stock) {
       </div>
     </div>`;
   document.querySelectorAll('[data-company-logo]').forEach((img) => {
-    img.addEventListener('load', () => img.closest('[data-logo-shell]')?.classList.add('has-logo'), { once: true });
-    img.addEventListener('error', () => img.closest('[data-logo-shell]')?.classList.add('logo-failed'), { once: true });
+    const shell = img.closest('[data-logo-shell]');
+    const tryNextLogo = () => {
+      const urls = (img.dataset.logoUrls || '').split('|').filter(Boolean);
+      const nextIndex = Number(img.dataset.logoIndex || 0) + 1;
+      if (nextIndex < urls.length) {
+        img.dataset.logoIndex = String(nextIndex);
+        shell?.classList.remove('logo-failed', 'has-logo');
+        img.src = urls[nextIndex];
+        return;
+      }
+      shell?.classList.remove('has-logo');
+      shell?.classList.add('logo-failed');
+    };
+    const markLogoLoaded = () => {
+      if (img.naturalWidth <= 2 || img.naturalHeight <= 2) {
+        tryNextLogo();
+        return;
+      }
+      shell?.classList.remove('logo-failed');
+      shell?.classList.add('has-logo');
+    };
+    img.addEventListener('load', markLogoLoaded);
+    img.addEventListener('error', tryNextLogo);
+    if (img.complete) {
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) markLogoLoaded();
+      else tryNextLogo();
+    }
   });
 
   const quickStats = [

@@ -385,7 +385,7 @@ async def stock_overview(ticker: str):
 
 
 async def _stock_overview_impl(ticker: str):
-    def _logo_url_from_website(website: str | None) -> str | None:
+    def _website_host(website: str | None) -> str | None:
         if not website:
             return None
         try:
@@ -395,25 +395,39 @@ async def _stock_overview_impl(ticker: str):
                 host = host[4:]
             if "." not in host:
                 return None
-            return f"https://logo.clearbit.com/{host}"
+            return host
         except Exception:
             return None
 
+    def _logo_urls(symbol: str, website: str | None) -> list[str]:
+        host = _website_host(website)
+        candidates = [
+            f"https://financialmodelingprep.com/image-stock/{symbol}.png",
+            f"https://static2.finnhub.io/file/publicdatany/finnhubimage/stock_logo/{symbol}.png",
+            f"https://eodhd.com/img/logos/US/{symbol}.png",
+        ]
+        if host:
+            candidates.append(f"https://logo.clearbit.com/{host}")
+        return list(dict.fromkeys(candidates))
+
     def _work():
-        tk = yf.Ticker(ticker.upper())
+        symbol = ticker.upper()
+        tk = yf.Ticker(symbol)
         info = tk.info
         fi = tk.fast_info
         last_price = float(fi.last_price)
         prev_close = float(fi.previous_close)
         from app.services.zh_names import get_zh_info
-        zh = get_zh_info(ticker.upper())
+        zh = get_zh_info(symbol)
         website = info.get("website")
+        logo_urls = _logo_urls(symbol, website)
         return {
-            "ticker": ticker.upper(),
-            "name": zh.get("name_zh") or info.get("shortName", ticker.upper()),
-            "name_en": info.get("shortName", ticker.upper()),
+            "ticker": symbol,
+            "name": zh.get("name_zh") or info.get("shortName", symbol),
+            "name_en": info.get("shortName", symbol),
             "website": website,
-            "logo_url": _logo_url_from_website(website),
+            "logo_url": logo_urls[0] if logo_urls else None,
+            "logo_urls": logo_urls,
             "price": round(last_price, 2),
             "change": round(last_price - prev_close, 2),
             "change_percent": round((last_price - prev_close) / prev_close * 100, 2) if prev_close else 0,

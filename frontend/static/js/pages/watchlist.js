@@ -48,6 +48,50 @@ function formatChange(value) {
   return `${sign}${number.toFixed(2)}%`;
 }
 
+function parseEarningsDate(value) {
+  const raw = String(value || '').slice(0, 10);
+  const parts = raw.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
+function startOfToday() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+function daysUntilDate(date) {
+  if (!date) return null;
+  return Math.round((date - startOfToday()) / 86400000);
+}
+
+function formatEarningsDelta(item) {
+  const explicit = Number(item.days_until);
+  const days = Number.isFinite(explicit) ? explicit : daysUntilDate(item.dateObj);
+  if (!Number.isFinite(days)) return '—';
+  if (days < 0) return '已过';
+  if (days === 0) return '今天';
+  if (days === 1) return '明天';
+  return `T+${days}`;
+}
+
+function normalizeUpcomingEarnings(payload) {
+  const items = Array.isArray(payload) ? payload : (payload?.earnings ?? []);
+  const today = startOfToday();
+  return items.map((item) => {
+    const ticker = String(item.ticker || '').toUpperCase();
+    const dateObj = parseEarningsDate(item.earnings_date || item.date);
+    return {
+      ticker,
+      name: item.name || item.company || ticker,
+      date: dateObj ? item.earnings_date || item.date : '',
+      dateObj,
+      days_until: item.days_until,
+    };
+  }).filter((item) => item.ticker && item.dateObj && item.dateObj >= today)
+    .sort((a, b) => a.dateObj - b.dateObj || a.ticker.localeCompare(b.ticker));
+}
+
 function normalizeSpark(stock) {
   const spark = stock.spark ?? stock.sparkline ?? stock.spark7d ?? stock.spark_7d ?? stock.sparkData ?? stock.prices7d ?? stock.sevenDaySpark;
   if (Array.isArray(spark)) {
@@ -215,10 +259,8 @@ function renderWatchlistShell(isLoading = false) {
         <aside class="terminal-sidebar" aria-label="市场智能侧栏">
           <section class="terminal-panel panel">
             <span class="label-caps">即将财报</span>
-            <ul>
-              <li><strong>NVDA</strong><span class="mono font-data-mono" data-numeric>T+2</span></li>
-              <li><strong>ADBE</strong><span class="mono font-data-mono" data-numeric>T+5</span></li>
-              <li><strong>TSLA</strong><span class="mono font-data-mono" data-numeric>T+8</span></li>
+            <ul id="upcoming-earnings-list">
+              <li class="terminal-panel-empty">正在加载…</li>
             </ul>
           </section>
           <section class="terminal-panel panel">
@@ -247,6 +289,42 @@ function renderWatchlistShell(isLoading = false) {
 // Cache the latest backend data so we can re-render quickly when entering edit mode
 let __watchlistState = { backendStocks: [], heatmapData: [] };
 let __editMode = false;
+
+function renderUpcomingEarnings(items) {
+  const list = document.getElementById('upcoming-earnings-list');
+  if (!list) return;
+  if (!items.length) {
+    list.innerHTML = '<li class="terminal-panel-empty">暂无未来财报数据</li>';
+    return;
+  }
+  list.innerHTML = items.slice(0, 3).map((item) => `
+    <li class="terminal-earnings-item">
+      <button type="button" class="terminal-earnings-ticker" data-earnings-ticker="${escapeHtml(item.ticker)}" title="${escapeHtml(item.name)}">
+        ${escapeHtml(item.ticker)}
+      </button>
+      <span class="terminal-earnings-date">
+        <span class="mono font-data-mono" data-numeric>${escapeHtml(formatEarningsDelta(item))}</span>
+        <small>${escapeHtml(String(item.date).slice(0, 10))}</small>
+      </span>
+    </li>
+  `).join('');
+  list.querySelectorAll('[data-earnings-ticker]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const ticker = button.dataset.earningsTicker;
+      if (ticker) window.location.hash = `#detail/${encodeURIComponent(ticker)}`;
+    });
+  });
+}
+
+async function loadUpcomingEarnings() {
+  try {
+    const payload = await api.earnings();
+    renderUpcomingEarnings(normalizeUpcomingEarnings(payload));
+  } catch (e) {
+    const list = document.getElementById('upcoming-earnings-list');
+    if (list) list.innerHTML = '<li class="terminal-panel-empty">财报数据暂不可用</li>';
+  }
+}
 
 async function fetchAndCacheBackend() {
   try {
@@ -366,6 +444,7 @@ function bindEditToolbar() {
 export async function renderWatchlist() {
   renderWatchlistShell(true);
   renderMarketStatus(document.getElementById('market-status-panel'));
+  loadUpcomingEarnings();
   const grid = document.getElementById('watchlist-grid');
   const heatmap = document.getElementById('terminal-heatmap');
 
