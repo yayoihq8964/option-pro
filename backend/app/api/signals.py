@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -11,10 +13,25 @@ from app.services.scoring import compute_market_scores, compute_stock_scores
 from app.services.signals import compute_market_signals, compute_stock_signals
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
+_TRUST_PROXY_HEADERS = os.environ.get("TRUST_PROXY_HEADERS", "").strip().lower() in {"1", "true", "yes"}
 
 
 def today_str() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _client_ip(request: Request) -> str:
+    if _TRUST_PROXY_HEADERS:
+        return (
+            request.headers.get("cf-connecting-ip")
+            or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown")
+        )
+    return request.client.host if request.client else "unknown"
+
+
+def _fingerprint(request: Request) -> str:
+    return hashlib.md5(_client_ip(request).encode()).hexdigest()[:12]
 
 
 @router.get("/market")
@@ -52,9 +69,7 @@ async def stock_signals(ticker: str):
 async def stock_ai_analysis(ticker: str, request: Request):
     """LLM confidence analysis on computed signals. Triggered only by explicit user action."""
     try:
-        import hashlib
-        ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
-        fp = hashlib.md5(ip.encode()).hexdigest()[:12]
+        fp = _fingerprint(request)
         symbol = ticker.upper().strip()
         signals = await asyncio.to_thread(compute_stock_signals, symbol)
         if isinstance(signals, dict):

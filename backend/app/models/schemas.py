@@ -75,11 +75,11 @@ class OptionLeg(BaseModel):
 class OptionChainResponse(BaseModel):
     ticker: Optional[str] = None
     expiration: Optional[str] = None
-    calls: List[OptionLeg] = []
-    puts: List[OptionLeg] = []
+    calls: List[OptionLeg] = Field(default_factory=list)
+    puts: List[OptionLeg] = Field(default_factory=list)
     underlying_price: Optional[float] = None
-    strikes: List[float] = []
-    grouped_by_strike: Dict[str, Dict[str, Optional[OptionLeg]]] = {}
+    strikes: List[float] = Field(default_factory=list)
+    grouped_by_strike: Dict[str, Dict[str, Optional[OptionLeg]]] = Field(default_factory=dict)
     data_limited: Optional[bool] = None
     upgrade_message: Optional[str] = None
 
@@ -126,14 +126,14 @@ class SectorHeatmapItem(BaseModel):
 
 
 class UnusualActivityLimitedResponse(BaseModel):
-    results: List[UnusualActivity] = []
+    results: List[UnusualActivity] = Field(default_factory=list)
     data_limited: Optional[bool] = None
     message: Optional[str] = None
 
 
 class SectorIVLimitedResponse(BaseModel):
-    rankings: List[Union[SectorIVRank, SectorHeatmapItem]] = []
-    data: List[SectorHeatmapItem] = []
+    rankings: List[Union[SectorIVRank, SectorHeatmapItem]] = Field(default_factory=list)
+    data: List[SectorHeatmapItem] = Field(default_factory=list)
     sector_id: Optional[str] = None
     sector_name: Optional[str] = None
     data_limited: Optional[bool] = None

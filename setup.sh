@@ -66,9 +66,15 @@ OPENAI_API_KEY=${api_key}
 OPENAI_BASE_URL=${api_base}
 OPENAI_MODEL=${model}
 OPENAI_REASONING=${reasoning}
+HOST_BIND=127.0.0.1
+PORT=2000
+APP_AUTH_TOKEN=
+TRUST_PROXY_HEADERS=false
+ALLOWED_ORIGINS=
 EOF
 
     echo -e "${GREEN}✓${NC} .env 已生成（已加入 .gitignore，不会泄露）"
+    echo -e "  默认仅监听 127.0.0.1；如需外网访问，请设置 APP_AUTH_TOKEN 后再修改 HOST_BIND。"
 fi
 
 # ── 3. Build & Start ──

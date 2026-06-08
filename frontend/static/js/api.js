@@ -38,12 +38,31 @@ export function invalidateCache(prefix = '') {
 // would await forever).
 const REQUEST_TIMEOUT_MS = 90 * 1000;
 
+function getAuthHeaders(initHeaders = {}) {
+  const headers = new Headers(initHeaders || {});
+  try {
+    const token = localStorage.getItem('optix.app.token') || '';
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+  } catch (_) {
+    // localStorage can be unavailable in some privacy modes; unauthenticated is fine.
+  }
+  return headers;
+}
+
 async function fetchJson(url, init) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const headers = getAuthHeaders(init?.headers);
+    const response = await fetch(url, { ...init, headers, signal: controller.signal });
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error('401 Unauthorized: set localStorage optix.app.token to your APP_AUTH_TOKEN');
+      }
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
     return await response.json();
   } catch (e) {
     if (e.name === 'AbortError') {

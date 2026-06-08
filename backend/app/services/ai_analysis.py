@@ -1,6 +1,6 @@
 """OpenAI Response API client for AI-powered analysis (GPT-5.4-mini + web search)."""
 from __future__ import annotations
-import json, os, math, re
+import hashlib, json, os, math, re
 from datetime import datetime, timedelta, timezone
 from openai import OpenAI
 
@@ -70,8 +70,13 @@ def _sanitize_ai(obj):
     return obj
 
 
+def _hash_payload(obj) -> str:
+    raw = json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
 def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: float, expiration: str, fingerprint: str = "") -> dict:
-    cache_key = f"alerts:{ticker}:{expiration}"
+    cache_key = f"alerts:{ticker.upper()}:{expiration}:{_hash_payload({'price': underlying_price, 'alerts': alerts[:8]})}"
     cached = _cache.get(cache_key)
     if cached and cached[0] > datetime.now(timezone.utc):
         # Same person → return cache. Different person → refresh.
@@ -88,7 +93,7 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
         for a in alerts[:8]
     ])
 
-    prompt = f"""你是一位专业的期权分析师。分析以下 {ticker} (当前价格 ${underlying_price:.2f}) 到期日 {expiration} 的期权异动数据，并使用联网搜索获取该公司最新新闻和市场动态来辅助判断。
+    prompt = f"""你是一位专业的期权分析师。分析以下 {ticker} (当前价格 ${underlying_price:.2f}) 到期日 {expiration} 的期权异动数据。只能基于下列结构化数据判断，不得编造新闻、财报或未提供的盘口信息。
 
 异动数据:
 {alerts_text}
@@ -101,7 +106,7 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
     try:
         raw = _ask(prompt, use_web_search=False)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
+        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(minutes=30), result, fingerprint)
         return _sanitize_ai(result)
     except Exception as e:
         return {"analysis": f"AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}

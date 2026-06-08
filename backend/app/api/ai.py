@@ -1,23 +1,34 @@
 from __future__ import annotations
 import asyncio
 import hashlib
+import os
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.services import ai_analysis
 from app.api.stocks import _sanitize
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
+_TRUST_PROXY_HEADERS = os.environ.get("TRUST_PROXY_HEADERS", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _client_ip(request: Request) -> str:
+    if _TRUST_PROXY_HEADERS:
+        return (
+            request.headers.get("cf-connecting-ip")
+            or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown")
+        )
+    return request.client.host if request.client else "unknown"
 
 
 def _fingerprint(request: Request) -> str:
     """Generate a fingerprint from client IP to distinguish different users."""
-    ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or request.client.host
-    return hashlib.md5(ip.encode()).hexdigest()[:12]
+    return hashlib.md5(_client_ip(request).encode()).hexdigest()[:12]
 
 
 class AlertsRequest(BaseModel):
     ticker: str
-    alerts: list[dict] = []
+    alerts: list[dict] = Field(default_factory=list)
     underlying_price: float = 0
     expiration: str = ""
 

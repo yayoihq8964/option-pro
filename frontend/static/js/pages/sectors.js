@@ -93,7 +93,7 @@ function renderShell() {
         <div>
           <span class="label-caps">板块</span>
           <h1 id="sectors-title">板块波动率分析</h1>
-          <p>以 Ethos 白色卡片、低调边框、IV 排名与翡翠绿到深红的热力图呈现板块波动率结构。</p>
+          <p>观察板块热度、IV 排名和成分股强弱，快速定位正在升温的交易主题。</p>
         </div>
       </header>
       <div class="sector-carousel-wrap">

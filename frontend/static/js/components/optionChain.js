@@ -30,7 +30,7 @@ const optionVolume = (o = {}) => firstValid(o.volume, o.vol);
 const optionOI = (o = {}) => firstValid(o.open_interest, o.oi, o.openInterest);
 const optionIV = (o = {}) => firstValidNonZero(o.implied_volatility, o.iv);
 
-/** Render unusual activity alerts above the chain (Ethos style) */
+/** Render unusual activity alerts above the chain. */
 export function renderAlerts(alerts = []) {
   if (!alerts.length) return '';
   const meta = (a = {}) => {

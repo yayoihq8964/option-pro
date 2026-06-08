@@ -191,7 +191,7 @@ function renderWatchlistShell(isLoading = false) {
       <header class="terminal-header">
         <div>
           <span class="label-caps">自选</span>
-          <h1 id="terminal-title">Intelligence Terminal</h1>
+          <h1 id="terminal-title">Signal Deck</h1>
           <p>信号分析与波动率监控 · 自定义自选已存储在本机</p>
         </div>
         <div class="terminal-header-right">

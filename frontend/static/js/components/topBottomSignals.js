@@ -66,7 +66,7 @@ function renderAiCard(data) {
       </div>
     </div>
     ${data.most_important_signal ? `<p style="margin:0 0 8px;font-size:13px;line-height:1.6"><b>最重要信号:</b> ${esc(data.most_important_signal)}</p>` : ''}
-    <p style="margin:0 0 8px;font-size:13px;line-height:1.6"><b>支撑:</b> <span class="mono">${(levels.support || []).join(', ') || '—'}</span> &nbsp;|&nbsp; <b>阻力:</b> <span class="mono">${(levels.resistance || []).join(', ') || '—'}</span></p>
+    <p style="margin:0 0 8px;font-size:13px;line-height:1.6"><b>支撑:</b> <span class="mono">${(levels.support || []).map(esc).join(', ') || '—'}</span> &nbsp;|&nbsp; <b>阻力:</b> <span class="mono">${(levels.resistance || []).map(esc).join(', ') || '—'}</span></p>
     ${(data.event_risks || []).length ? `<p style="margin:0 0 8px;font-size:12px;color:var(--color-muted)"><b>事件风险:</b> ${data.event_risks.map(esc).join('；')}</p>` : ''}
     ${data.summary ? `<p style="margin:0;font-size:13px;line-height:1.65;color:var(--color-muted)">${esc(data.summary)}</p>` : ''}
   </div>`;

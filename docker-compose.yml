@@ -10,8 +10,11 @@ services:
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini-2026-03-17}
       - OPENAI_REASONING=${OPENAI_REASONING:-xhigh}
+      - APP_AUTH_TOKEN=${APP_AUTH_TOKEN:-}
+      - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     ports:
-      - "${PORT:-2000}:8000"
+      - "${HOST_BIND:-127.0.0.1}:${PORT:-2000}:8000"
     volumes:
       - ./frontend:/app/frontend:ro
     restart: unless-stopped

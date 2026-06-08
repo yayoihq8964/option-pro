@@ -9,3 +9,5 @@ node_modules/
 *.egg-info/
 dist/
 build/
+.pycache_tmp/
+*.cpython-*.pyc

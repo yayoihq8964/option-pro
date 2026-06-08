@@ -1,6 +1,6 @@
 # Optix Pro — 美股期权可视化平台
 
-一个专业的美股期权链可视化工具，通过 Massive.com API 获取实时市场数据。
+一个个人使用的美股期权链可视化工具。当前版本主要通过 yfinance 获取行情、期权链和财报日历，并可选接入 OpenAI-compatible Responses API 做 AI 分析。
 
 ## 功能
 
@@ -33,7 +33,7 @@
 
 - **后端**: Python FastAPI + httpx (async)
 - **前端**: Vanilla JS SPA + Tailwind CSS + TradingView Lightweight Charts
-- **数据源**: [Massive.com](https://massive.com) REST API
+- **数据源**: yfinance / Yahoo Finance；Massive.com 客户端为遗留备用代码
 - **部署**: Docker + docker-compose
 
 ## 快速开始
@@ -44,13 +44,20 @@
 # 1. 复制环境变量文件
 cp .env.example .env
 
-# 2. 填入你的 Massive.com API Key
-# 编辑 .env 文件，设置 MASSIVE_API_KEY
+# 2. 如需 AI 分析，填入 OpenAI-compatible API 配置
+# 编辑 .env 文件，设置 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
 
 # 3. 启动
 docker compose up --build
 
-# 访问 http://localhost:8000
+# 访问 http://localhost:2000
+```
+
+默认 Docker 只绑定 `127.0.0.1`，适合个人本机使用。如果需要局域网或公网访问，先在 `.env` 设置 `APP_AUTH_TOKEN`，再把 `HOST_BIND` 改成需要监听的地址。前端带 token 的方式：
+
+```js
+localStorage.setItem('optix.app.token', 'your-token-here');
+location.reload();
 ```
 
 ### 本地开发
@@ -58,12 +65,12 @@ docker compose up --build
 ```bash
 cd backend
 pip install -r requirements.txt
-MASSIVE_API_KEY=your_key_here uvicorn app.main:app --reload --port 8000
+OPENAI_API_KEY=your_key_here uvicorn app.main:app --reload --port 8000
 ```
 
 ## API 文档
 
-启动后访问 http://localhost:8000/docs 查看 Swagger 文档。
+Docker 启动后访问 http://localhost:2000/docs 查看 Swagger 文档；本地 `uvicorn --port 8000` 开发时访问 http://localhost:8000/docs。
 
 ### 主要接口
 
@@ -94,7 +101,7 @@ option-pro/
 │   │   │   ├── sectors.py
 │   │   │   └── market.py
 │   │   ├── services/            # 业务逻辑
-│   │   │   ├── massive.py       # Massive.com API 客户端
+│   │   │   ├── massive.py       # Massive.com 备用客户端（当前主流程未使用）
 │   │   │   ├── cache.py         # 内存 TTL 缓存
 │   │   │   └── sectors.py       # 板块定义 & IV 计算
 │   │   └── models/

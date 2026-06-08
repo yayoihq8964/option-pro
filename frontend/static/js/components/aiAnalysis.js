@@ -3,7 +3,7 @@ import { api, safe } from '../api.js';
 const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
 /**
- * AI alert analysis button + result card (Ethos style: black button, white result card).
+ * AI alert analysis button + result card.
  */
 export function renderAlertAnalysisButton(container, ticker, alerts, underlyingPrice, expiration) {
   if (!container || !alerts || alerts.length === 0) return;
