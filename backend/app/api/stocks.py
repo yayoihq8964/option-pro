@@ -5,6 +5,7 @@ import math
 import time
 from typing import Any
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 import yfinance as yf
@@ -527,8 +528,10 @@ def _compute_sma(data, period):
     return result
 
 
-# Per-timeframe TTL (seconds). Longer timeframes change much more slowly.
-_CHART_TTL = {"5m": 300, "15m": 600, "1h": 1800, "1d": 3600, "1w": 21600}
+# Keep chart data live-ish. Personal dashboard traffic is low, and a 5-minute
+# cap prevents the current candle from feeling stale during active sessions.
+_CHART_TTL = {"5m": 300, "15m": 300, "1h": 300, "1d": 300, "1w": 300}
+_NEW_YORK_TZ = ZoneInfo("America/New_York")
 
 
 @router.get("/{ticker}/chart")
@@ -547,8 +550,8 @@ async def _stock_chart_impl(ticker: str, range: str):
         # visible_bars = how many bars to show initially (user can scroll left for more)
         config = {
             "5m":  ("5d",   "5m",  True,  80),    # 5分钟K线, fetch 5 days
-            "15m": ("1mo",  "15m", False, 80),     # 15分钟K线, fetch 1 month
-            "1h":  ("3mo",  "1h",  False, 80),     # 1小时K线, fetch 3 months
+            "15m": ("1mo",  "15m", True,  80),     # 15分钟K线, fetch 1 month
+            "1h":  ("3mo",  "1h",  True,  80),     # 1小时K线, fetch 3 months
             "1d":  ("2y",   "1d",  False, 120),    # 日K线, fetch 2 years
             "1w":  ("5y",   "1wk", False, 104),    # 周K线, fetch 5 years
         }
@@ -562,25 +565,50 @@ async def _stock_chart_impl(ticker: str, range: str):
         raw_bars = []
         for idx, row in hist.iterrows():
             t = int(idx.timestamp())
-            o, h, l, c = round(float(row["Open"]), 2), round(float(row["High"]), 2), round(float(row["Low"]), 2), round(float(row["Close"]), 2)
-            v = int(row["Volume"])
-            raw_bars.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": v})
+            try:
+                o, h, l, c = (
+                    round(float(row["Open"]), 2),
+                    round(float(row["High"]), 2),
+                    round(float(row["Low"]), 2),
+                    round(float(row["Close"]), 2),
+                )
+            except Exception:
+                continue
+            if not all(math.isfinite(v) and v > 0 for v in (o, h, l, c)):
+                continue
+            try:
+                volume_raw = float(row.get("Volume", 0))
+                v = max(0, int(volume_raw)) if math.isfinite(volume_raw) else 0
+            except Exception:
+                v = 0
+            bar = {"t": t, "o": o, "h": h, "l": l, "c": c, "v": v}
+            if prepost:
+                dt = idx.to_pydatetime()
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_NEW_YORK_TZ)
+                else:
+                    dt = dt.astimezone(_NEW_YORK_TZ)
+                bar["_ny_min"] = dt.hour * 60 + dt.minute
+            raw_bars.append(bar)
 
-        # For intraday with prepost: filter out degenerate bars
-        # Keep bars that have volume > 0 OR are within regular market hours (9:30-16:00 ET)
+        # For intraday with prepost: keep valid extended-hours bars and tag
+        # them so the frontend can visually distinguish pre/post-market.
         if prepost:
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-            ET = _tz(_td(hours=-4))
             filtered = []
             for b in raw_bars:
-                dt = _dt.fromtimestamp(b["t"], tz=ET)
-                hour_min = dt.hour * 60 + dt.minute
+                hour_min = b.pop("_ny_min", None)
+                if hour_min is None:
+                    continue
                 is_regular = 570 <= hour_min < 960  # 9:30 to 16:00 ET
+                has_valid_price = all(math.isfinite(float(b[k])) and float(b[k]) > 0 for k in ("o", "h", "l", "c"))
+                if not has_valid_price:
+                    continue
                 if is_regular:
+                    b["session"] = "regular"
                     filtered.append(b)
-                elif b["v"] > 0:
-                    # Extended hours: only keep bars with actual volume
+                else:
                     b["ext"] = True
+                    b["session"] = "pre" if hour_min < 570 else "post"
                     filtered.append(b)
             bars = filtered
         else:

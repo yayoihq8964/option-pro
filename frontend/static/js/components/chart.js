@@ -18,6 +18,7 @@ export function renderChart(container, data = {}, visibleBars = 0) {
     container.innerHTML = '<div class="h-64 md:h-80 flex items-center justify-center text-on-surface-variant text-sm">图表库加载中...</div>';
     return null;
   }
+  const hasExtendedBars = bars.some(b => b.extended);
 
   const chart = LightweightCharts.createChart(container, {
     height: container.clientHeight || 400,
@@ -43,6 +44,11 @@ export function renderChart(container, data = {}, visibleBars = 0) {
     high: b.high,
     low: b.low,
     close: b.close,
+    ...(b.extended ? {
+      color: b.close >= b.open ? 'rgba(5,150,105,0.58)' : 'rgba(186,26,26,0.58)',
+      borderColor: b.close >= b.open ? 'rgba(5,150,105,0.62)' : 'rgba(186,26,26,0.62)',
+      wickColor: b.close >= b.open ? 'rgba(5,150,105,0.62)' : 'rgba(186,26,26,0.62)',
+    } : {}),
   })));
 
   // Volume series (bottom histogram)
@@ -57,7 +63,9 @@ export function renderChart(container, data = {}, visibleBars = 0) {
   volumeSeries.setData(bars.map(b => ({
     time: b.time,
     value: b.volume || 0,
-    color: b.close >= b.open ? 'rgba(5,150,105,0.25)' : 'rgba(186,26,26,0.25)',
+    color: b.extended
+      ? (b.close >= b.open ? 'rgba(5,150,105,0.12)' : 'rgba(186,26,26,0.12)')
+      : (b.close >= b.open ? 'rgba(5,150,105,0.25)' : 'rgba(186,26,26,0.25)'),
   })));
 
   // EMA20 line (solid purple)
@@ -111,6 +119,7 @@ export function renderChart(container, data = {}, visibleBars = 0) {
   legend.innerHTML = `
     <span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded inline-block" style="background:#6a1cf6"></span>EMA 20</span>
     <span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded inline-block" style="background:#4953ac;border-top:2px dashed #4953ac;height:0"></span>SMA 50</span>
+    ${hasExtendedBars ? '<span class="flex items-center gap-1.5"><span class="w-5 h-0.5 rounded inline-block" style="background:rgba(89,92,96,.45)"></span>EXT 盘前/盘后</span>' : ''}
   `;
   container.appendChild(legend);
 
@@ -129,6 +138,8 @@ function normalizeBars(bars) {
       low: Number(b.l ?? b.low),
       close: Number(b.c ?? b.close),
       volume: Number(b.v ?? b.volume ?? 0),
+      extended: Boolean(b.ext ?? b.extended),
+      session: String(b.session || ''),
     }))
     .filter(b => Number.isFinite(b.time) && Number.isFinite(b.close) && b.time > 0)
     .sort((a, b) => a.time - b.time);

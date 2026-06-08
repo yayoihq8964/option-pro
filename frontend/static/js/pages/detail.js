@@ -5,6 +5,7 @@ import { renderOptionChain, renderAlerts } from '../components/optionChain.js';
 import { renderAlertAnalysisButton } from '../components/aiAnalysis.js';
 
 const TIMEFRAMES = [ ['5m','5分'], ['15m','15分'], ['1h','1时'], ['1d','日K'], ['1w','周K'] ];
+const CHART_REFRESH_MS = 5 * 60 * 1000;
 
 const esc = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const money = (n) => n == null || Number.isNaN(Number(n)) ? '—' : `$${Number(n).toFixed(2)}`;
@@ -255,7 +256,7 @@ export async function mountDetail(tickerFromRoute) {
   });
 
   // Render timeframe buttons
-  let currentRange = '1d';
+  let currentRange = '5m';
   const tf = document.getElementById('tf-buttons');
   const drawTf = () => tf.innerHTML = TIMEFRAMES.map(([r, l]) =>
     `<button type="button" class="ethos-timeframe-button ${r === currentRange ? 'active' : ''}" data-range="${r}">${l}</button>`
@@ -279,7 +280,7 @@ export async function mountDetail(tickerFromRoute) {
   state.refreshTimer = setInterval(() => {
     if (state.cancelled) return;
     loadChart(ticker, currentRange, state);
-  }, 30 * 60 * 1000);
+  }, CHART_REFRESH_MS);
   loadChart(ticker, currentRange, state);
 
   // Top/Bottom signals (4 gauges + AI analysis)
