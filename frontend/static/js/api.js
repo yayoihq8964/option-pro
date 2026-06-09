@@ -135,6 +135,29 @@ export const api = {
     return cached(`earn-impact:${ticker}`, T.STATIC, () =>
       fetchJson(`${API_BASE}/ai/earnings-impact/${encodeURIComponent(ticker)}`));
   },
+
+  strengthScan(params = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') query.set(key, value);
+    });
+    const suffix = query.toString() ? `?${query}` : '';
+    return cached(`strength:${suffix}`, T.SLOW, () => fetchJson(`${API_BASE}/strength/scan${suffix}`));
+  },
+
+  strengthStock(ticker, profile = 'balanced') {
+    return cached(`strength-stock:${enc(ticker)}:${profile}`, T.SLOW, () =>
+      fetchJson(`${API_BASE}/strength/stocks/${enc(ticker)}?profile=${encodeURIComponent(profile)}`));
+  },
+
+  strengthSectors(period = '3mo') {
+    return cached(`strength-sectors:${period}`, T.SLOW, () =>
+      fetchJson(`${API_BASE}/strength/sectors?period=${encodeURIComponent(period)}`));
+  },
+
+  strengthProfiles() {
+    return cached('strength-profiles', T.STATIC, () => fetchJson(`${API_BASE}/strength/profiles`));
+  },
 };
 
 export function safe(p) {

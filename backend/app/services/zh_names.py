@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Chinese name/description mapping for US stocks. Avoids API calls."""
 
 NAMES = {

@@ -30,7 +30,7 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
             response.headers["Cloudflare-CDN-Cache-Control"] = "no-store"  # CF explicit
         return response
 
-from app.api import ai, earnings, market, options, sectors, signals, stocks
+from app.api import ai, earnings, market, options, sectors, signals, stocks, strength
 
 app = FastAPI(
     title="Optix Pro Options Visualization API",
@@ -109,6 +109,7 @@ class _RateLimit(BaseHTTPMiddleware):
         ip = _client_ip(request)
         is_heavy = (
             path.startswith("/api/ai/") or
+            path.startswith("/api/strength/scan") or
             "/ai-analysis" in path or
             "/analyze-" in path or
             path.endswith("/unusual") or
@@ -140,6 +141,7 @@ app.include_router(sectors.router)
 app.include_router(market.router)
 app.include_router(signals.router)
 app.include_router(ai.router)
+app.include_router(strength.router)
 
 
 @app.get("/health")

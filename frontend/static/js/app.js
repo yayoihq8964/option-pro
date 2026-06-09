@@ -2,6 +2,7 @@ import { renderWatchlist } from './pages/watchlist.js';
 import { mountDetail } from './pages/detail.js';
 import { renderSectors } from './pages/sectors.js';
 import { renderEarnings } from './pages/earnings.js';
+import { renderScreener } from './pages/screener.js';
 import { initSearch } from './components/search.js';
 import { mountIndexTicker } from './components/indices.js';
 
@@ -9,13 +10,15 @@ const routes = {
   watchlist: renderWatchlist,
   sectors: renderSectors,
   earnings: renderEarnings,
+  screener: renderScreener,
   detail: renderDetailRoute
 };
 
 const routeTitles = {
   watchlist: '总览',
   sectors: '板块',
-  earnings: '财报'
+  earnings: '财报',
+  screener: '选股'
 };
 
 function parseHash() {

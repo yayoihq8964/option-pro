@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hashlib, json, os, math, re
 from datetime import datetime, timedelta, timezone
-from openai import OpenAI
+from typing import Any
 
 # Cache: key → (expires_at, result, request_fingerprint)
 # If a different fingerprint hits the same key, refresh the analysis
@@ -10,10 +10,10 @@ _cache: dict[str, tuple[datetime, dict, str]] = {}
 
 # Module-level OpenAI client singleton (httpx connection pool reuse).
 # Lazy-initialized so import-time doesn't crash when env vars unset (tests).
-_client_singleton: OpenAI | None = None
+_client_singleton: Any | None = None
 
 
-def _get_client() -> OpenAI:
+def _get_client() -> Any:
     global _client_singleton
     if _client_singleton is not None:
         return _client_singleton
@@ -21,6 +21,10 @@ def _get_client() -> OpenAI:
     base = os.environ.get("OPENAI_BASE_URL", "")
     if not key:
         raise RuntimeError("OPENAI_API_KEY not set")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("openai package is not installed") from exc
     kwargs = {"api_key": key}
     if base:
         kwargs["base_url"] = base
