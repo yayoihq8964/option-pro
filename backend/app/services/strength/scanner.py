@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import yfinance as yf
 
+from app.config import get_settings
 from app.services import yahoo
 from app.services.cache import cache
 from app.services.sectors import SECTORS
@@ -15,12 +16,21 @@ from app.services.strength.finnhub import (
     enrich_rows_with_finnhub,
     finnhub_is_enabled,
 )
+from app.services.strength.marketdata import (
+    enrich_rows_with_marketdata_options,
+    marketdata_is_enabled,
+)
+from app.services.strength.market_regime import MARKET_BENCHMARKS, compute_market_regime
+from app.services.strength.yahoo_options import (
+    enrich_rows_with_yahoo_options,
+    yahoo_options_is_enabled,
+)
 from app.services.zh_names import get_zh_name
 
 TIMEFRAMES = ("short", "mid", "long", "all")
 PROFILES = ("conservative", "balanced", "aggressive")
 UNIVERSES = ("themes",)
-BENCHMARKS = ("SPY", "QQQ", "IWM", "^VIX")
+BENCHMARKS = MARKET_BENCHMARKS
 
 PROFILE_TILT = {
     "conservative": {"trend": 1.12, "risk": 1.22, "volume": .88, "breakout": .90},
@@ -256,44 +266,6 @@ def _sector_scores(rows: list[dict[str, Any]]) -> dict[str, float]:
     return {sid: _clamp(score) for sid, score in ranks.items()}
 
 
-def _market_regime(index_data: dict[str, pd.DataFrame]) -> dict[str, Any]:
-    spy = index_data.get("SPY", pd.DataFrame())
-    qqq = index_data.get("QQQ", pd.DataFrame())
-    iwm = index_data.get("IWM", pd.DataFrame())
-    vix = index_data.get("^VIX", pd.DataFrame())
-
-    def close(df: pd.DataFrame) -> pd.Series:
-        return df["Close"].dropna() if not df.empty and "Close" in df.columns else pd.Series(dtype=float)
-
-    spy_close, qqq_close, iwm_close, vix_close = close(spy), close(qqq), close(iwm), close(vix)
-    spy_ret20 = _ret(spy_close, 20)
-    qqq_ret20 = _ret(qqq_close, 20)
-    iwm_ret20 = _ret(iwm_close, 20)
-    spy_sma200 = _safe_float(spy_close.rolling(200).mean().iloc[-1], 4) if len(spy_close) >= 200 else None
-    spy_above_200 = bool(spy_sma200 and spy_close.iloc[-1] > spy_sma200) if len(spy_close) else False
-    vix_last = _safe_float(vix_close.iloc[-1], 2) if len(vix_close) else None
-
-    score = 50.0
-    score += 14 if spy_above_200 else -12
-    score += _clamp((spy_ret20 or 0) * 100 * 2.2, -15, 15, 0)
-    score += _clamp((qqq_ret20 or 0) * 100 * 1.4, -10, 10, 0)
-    score += _clamp((iwm_ret20 or 0) * 100 * 1.1, -8, 8, 0)
-    if vix_last is not None:
-        score += 8 if vix_last < 16 else (-10 if vix_last > 25 else 0)
-    score = round(_clamp(score), 1)
-    label = "Risk-on" if score >= 64 else ("防守" if score <= 42 else "中性")
-
-    return {
-        "score": score,
-        "label": label,
-        "spy_20d": _safe_float((spy_ret20 or 0) * 100, 2) if spy_ret20 is not None else None,
-        "qqq_20d": _safe_float((qqq_ret20 or 0) * 100, 2) if qqq_ret20 is not None else None,
-        "iwm_20d": _safe_float((iwm_ret20 or 0) * 100, 2) if iwm_ret20 is not None else None,
-        "spy_above_sma200": spy_above_200,
-        "vix": vix_last,
-    }
-
-
 def _risk_penalty(row: dict[str, Any], min_avg_dollar_volume: float, profile: str) -> tuple[float, list[str], list[str]]:
     tilt = PROFILE_TILT.get(profile, PROFILE_TILT["balanced"])
     penalty = 0.0
@@ -346,6 +318,23 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
     ranks = {key: _pct_rank(rows, key) for key in percentile_keys}
     sector_score_by_id = _sector_scores(rows)
     tilt = PROFILE_TILT.get(profile, PROFILE_TILT["balanced"])
+    rules = market.get("rules") if isinstance(market.get("rules"), dict) else {}
+    momentum_mult = float(rules.get("momentum_weight_multiplier", 1.0) or 1.0)
+    relative_mult = float(rules.get("relative_strength_weight_multiplier", 1.0) or 1.0)
+    long_mult = float(rules.get("long_trend_weight_multiplier", 1.0) or 1.0)
+    breakout_mult = float(rules.get("breakout_weight_multiplier", 1.0) or 1.0)
+    option_mult = float(rules.get("option_heat_weight_multiplier", 1.0) or 1.0)
+    risk_mult = float(rules.get("risk_penalty_multiplier", 1.0) or 1.0)
+    weights = {
+        "short": .20 * momentum_mult,
+        "mid": .30 * relative_mult,
+        "long": .20 * max(long_mult, breakout_mult),
+        "sector": .12,
+        "option": .06 * option_mult,
+        "market": .12,
+    }
+    weight_total = sum(weights.values()) or 1.0
+    effective_weights = {key: round(value / weight_total, 4) for key, value in weights.items()}
     scored: list[dict[str, Any]] = []
 
     for row in rows:
@@ -387,13 +376,24 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
         option_heat_score = 50.0
         risk_penalty, risk_flags, warnings = _risk_penalty(row, min_avg_dollar_volume, profile)
         raw_final = (
-            short_score * .20 +
-            mid_score * .30 +
-            long_score * .20 +
-            sector_score * .12 +
-            option_heat_score * .06 +
-            market["score"] * .12 -
-            risk_penalty
+            short_score * weights["short"] +
+            mid_score * weights["mid"] +
+            long_score * weights["long"] +
+            sector_score * weights["sector"] +
+            option_heat_score * weights["option"] +
+            market["score"] * weights["market"]
+        ) / weight_total - risk_penalty * risk_mult
+        market_adjustment = _safe_float(
+            raw_final - (
+                short_score * .20 +
+                mid_score * .30 +
+                long_score * .20 +
+                sector_score * .12 +
+                option_heat_score * .06 +
+                market["score"] * .12 -
+                risk_penalty
+            ),
+            2,
         )
         final_score = round(_clamp(raw_final), 1)
         classification = _classify(row, final_score, risk_penalty)
@@ -414,6 +414,8 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
             reasons.append("价格位于关键均线上方")
         if market["score"] >= 64:
             tags.append("市场顺风")
+        elif market["score"] < 40:
+            tags.append("弱市降权")
         tags.extend(risk_flags[:2])
         if not reasons:
             reasons.append("综合强度处于股票池前列")
@@ -435,6 +437,9 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
             "sector": round(sector_score, 1),
             "option_heat": round(option_heat_score, 1),
             "risk_penalty": round(risk_penalty, 1),
+            "market_regime": round(market.get("score") or 50, 1),
+            "market_adjustment": market_adjustment,
+            "market_rules": effective_weights,
         }
         scored.append({
             **row,
@@ -443,6 +448,7 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
             "score_long": round(_clamp(long_score), 1),
             "sector_score": round(sector_score, 1),
             "option_heat_score": round(option_heat_score, 1),
+            "option_score_weight": effective_weights["option"],
             "market_regime_score": market["score"],
             "risk_penalty": risk_penalty,
             "final_score": final_score,
@@ -473,6 +479,31 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
     return scored
 
 
+def _refresh_classifications(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        final_score = _safe_float(row.get("final_score"), 1)
+        if final_score is None:
+            continue
+        classification = _classify(row, final_score, _safe_float(row.get("risk_penalty"), 1) or 0.0)
+        row["classification"] = classification
+        row["label"] = classification
+
+
+def _sort_scored(rows: list[dict[str, Any]], timeframe: str) -> None:
+    if timeframe in {"short", "mid", "long"}:
+        key = f"score_{timeframe}"
+        rows.sort(
+            key=lambda item: (
+                (item.get(key) or 0) * .88
+                + (item.get("option_heat_score") or 50) * .06
+                + (item.get("final_score") or 0) * .06
+            ),
+            reverse=True,
+        )
+        return
+    rows.sort(key=lambda item: item.get("final_score") or 0, reverse=True)
+
+
 def _sector_strength(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -497,6 +528,47 @@ def _sector_strength(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sectors
 
 
+def _combined_options_status(yahoo_status: dict[str, Any], marketdata_status: dict[str, Any]) -> dict[str, Any]:
+    yahoo_active = yahoo_status.get("status") == "active"
+    marketdata_active = marketdata_status.get("status") == "active"
+    if yahoo_active and marketdata_active:
+        provider = "Yahoo/yfinance + MarketData.app"
+    elif marketdata_active:
+        provider = "MarketData.app"
+    elif yahoo_active:
+        provider = "Yahoo/yfinance"
+    else:
+        provider = "Yahoo/yfinance / MarketData.app"
+
+    if yahoo_active or marketdata_active:
+        status = "active"
+    elif yahoo_status.get("status") == "degraded" or marketdata_status.get("status") == "degraded":
+        status = "degraded"
+    elif yahoo_status.get("status") == "disabled" and marketdata_status.get("status") == "disabled":
+        status = "disabled"
+    else:
+        status = marketdata_status.get("status") or yahoo_status.get("status") or "placeholder"
+
+    messages = []
+    if yahoo_status.get("message"):
+        messages.append(str(yahoo_status["message"]))
+    if marketdata_status.get("message"):
+        messages.append(str(marketdata_status["message"]))
+
+    return {
+        "provider": provider,
+        "status": status,
+        "configured": bool(yahoo_status.get("configured") or marketdata_status.get("configured")),
+        "enriched": int(yahoo_status.get("enriched") or 0) + int(marketdata_status.get("enriched") or 0),
+        "failed": int(yahoo_status.get("failed") or 0) + int(marketdata_status.get("failed") or 0),
+        "broad": yahoo_status,
+        "refinement": marketdata_status,
+        "candidate_pool": yahoo_status.get("candidate_pool"),
+        "coverage": yahoo_status.get("coverage"),
+        "message": "；".join(messages),
+    }
+
+
 def _scan_sync(
     *,
     universe: str,
@@ -516,7 +588,7 @@ def _scan_sync(
     all_symbols = list(dict.fromkeys(tickers + list(BENCHMARKS)))
     raw = _download_history(all_symbols)
     index_data = {symbol: _slice_ticker(raw, symbol) for symbol in BENCHMARKS}
-    market = _market_regime(index_data)
+    market = compute_market_regime(index_data)
     spy = index_data.get("SPY", pd.DataFrame())
 
     rows: list[dict[str, Any]] = []
@@ -539,14 +611,15 @@ def _scan_sync(
             skipped["data_error"] += 1
 
     scored = _score_rows(rows, market, profile, min_avg_dollar_volume)
-    if timeframe in {"short", "mid", "long"}:
-        key = f"score_{timeframe}"
-        scored.sort(key=lambda item: item.get(key) or 0, reverse=True)
-    else:
-        scored.sort(key=lambda item: item.get("final_score") or 0, reverse=True)
-
+    yahoo_options_status = enrich_rows_with_yahoo_options(scored, display_top=top)
+    _refresh_classifications(scored)
+    _sort_scored(scored, timeframe)
     limited = scored[:top]
     finnhub_status = enrich_rows_with_finnhub(limited)
+    marketdata_status = enrich_rows_with_marketdata_options(limited)
+    _refresh_classifications(limited)
+    _sort_scored(limited, timeframe)
+    options_status = _combined_options_status(yahoo_options_status, marketdata_status)
     return {
         "as_of": _now_iso(),
         "params": {
@@ -574,9 +647,7 @@ def _scan_sync(
             },
             "fundamentals": finnhub_status,
             "options": {
-                "provider": "planned",
-                "status": "placeholder",
-                "message": "期权热度当前为中性占位，待接入真实期权流/IV历史",
+                **options_status,
                 "candidates": OPTION_DATA_SOURCE_CANDIDATES,
             },
         },
@@ -594,7 +665,14 @@ async def scan_strength(
     min_avg_dollar_volume: float = 10_000_000,
     ttl: int = 600,
 ) -> dict[str, Any]:
-    key = f"strength:{universe}:{timeframe}:{profile}:{top}:{sector_id}:{min_price}:{min_avg_dollar_volume}:fh:{int(finnhub_is_enabled())}"
+    settings = get_settings()
+    key = (
+        f"strength:{universe}:{timeframe}:{profile}:{top}:{sector_id}:{min_price}:{min_avg_dollar_volume}"
+        f":fh:{int(finnhub_is_enabled(settings))}:md:{int(marketdata_is_enabled(settings))}"
+        f":yo:{int(yahoo_options_is_enabled(settings))}:{settings.yahoo_options_enrich_limit}"
+        f":ydte:{settings.yahoo_option_target_dte}:ywin:{settings.yahoo_option_strike_window_pct}"
+        ":mr:v2"
+    )
 
     async def produce() -> dict[str, Any]:
         import asyncio

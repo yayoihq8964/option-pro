@@ -3132,6 +3132,33 @@ body {
   color: #8a5a10;
 }
 
+.strength-market-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.strength-market-metrics span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 8px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-panel) 78%, var(--color-emerald) 6%);
+}
+
+.strength-market-metrics small {
+  color: var(--color-muted);
+  font-size: 9px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.strength-market-metrics b {
+  font-size: 13px;
+  font-weight: 950;
+}
+
 .strength-market-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3155,6 +3182,21 @@ body {
 .strength-market-grid b {
   font-size: 14px;
   font-weight: 900;
+}
+
+.strength-market-warnings {
+  display: grid;
+  gap: 6px;
+}
+
+.strength-market-warnings span {
+  padding: 8px 10px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-amber) 12%, var(--color-panel));
+  color: #8a5a10;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.35;
 }
 
 .strength-sector-list {
@@ -3290,6 +3332,10 @@ body {
   }
 
   .strength-market-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .strength-market-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

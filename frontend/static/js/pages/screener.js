@@ -58,6 +58,13 @@ function sourceStatusLabel(status) {
   return '未知';
 }
 
+function sourceStatusTone(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'active') return 'active';
+  if (normalized === 'degraded') return 'degraded';
+  return 'idle';
+}
+
 function navigateToDetail(ticker) {
   if (!ticker) return;
   window.location.hash = `#detail/${encodeURIComponent(ticker)}`;
@@ -76,6 +83,7 @@ function renderScoreBar(value, label) {
 
 function renderMarketCard(market = {}) {
   const tone = scoreTone(market.score);
+  const warnings = Array.isArray(market.warnings) ? market.warnings : [];
   return `
     <section class="strength-market-card strength-market-card--${tone}">
       <span class="label-caps">市场状态</span>
@@ -83,12 +91,20 @@ function renderMarketCard(market = {}) {
         <strong class="mono font-data-mono" data-numeric>${formatScore(market.score)}</strong>
         <span>${escapeHtml(market.label || '中性')}</span>
       </div>
+      <div class="strength-market-metrics">
+        <span><small>趋势</small><b class="mono">${formatScore(market.index_trend_score)}</b></span>
+        <span><small>动量</small><b class="mono">${formatScore(market.market_momentum_score)}</b></span>
+        <span><small>宽度</small><b class="mono">${formatScore(market.market_breadth_score)}</b></span>
+        <span><small>量能</small><b class="mono">${formatScore(market.market_volume_score)}</b></span>
+        <span><small>风险偏好</small><b class="mono">${formatScore(market.risk_appetite_score)}</b></span>
+      </div>
       <div class="strength-market-grid">
         <span><small>SPY 20D</small><b class="mono ${Number(market.spy_20d) >= 0 ? 'up' : 'down'}">${formatPercent(market.spy_20d)}</b></span>
         <span><small>QQQ 20D</small><b class="mono ${Number(market.qqq_20d) >= 0 ? 'up' : 'down'}">${formatPercent(market.qqq_20d)}</b></span>
         <span><small>IWM 20D</small><b class="mono ${Number(market.iwm_20d) >= 0 ? 'up' : 'down'}">${formatPercent(market.iwm_20d)}</b></span>
         <span><small>VIX</small><b class="mono">${market.vix == null ? '—' : Number(market.vix).toFixed(2)}</b></span>
       </div>
+      ${warnings.length ? `<div class="strength-market-warnings">${warnings.slice(0, 2).map((warning) => `<span>${escapeHtml(warning)}</span>`).join('')}</div>` : ''}
     </section>
   `;
 }
@@ -124,13 +140,18 @@ function renderSectorRail(sectors = []) {
 function renderDataNote(dataSources = {}) {
   const fundamentals = dataSources.fundamentals || {};
   const options = dataSources.options || {};
+  const optionStatus = String(options.status || '').toLowerCase();
   const candidates = Array.isArray(options.candidates) && options.candidates.length
     ? options.candidates
     : FALLBACK_OPTION_SOURCES;
   const names = candidates.slice(0, 4).map((item) => item.name).join(' / ');
+  const optionProvider = options.provider || 'Yahoo/yfinance / MarketData.app';
+  const optionText = optionStatus === 'active'
+    ? `期权热度 ${optionProvider} ${sourceStatusLabel(options.status)}`
+    : `期权热度 ${sourceStatusLabel(options.status || 'placeholder')}，可接入 ${names}`;
   return `
     <p class="detail-muted strength-data-note">
-      价格源 Yahoo/yfinance · Finnhub ${sourceStatusLabel(fundamentals.status)} · 期权热度为中性占位，可接入 ${escapeHtml(names)}
+      价格源 Yahoo/yfinance · Finnhub ${sourceStatusLabel(fundamentals.status)} · ${escapeHtml(optionText)}
     </p>
   `;
 }
@@ -141,8 +162,11 @@ function renderDataSourcePanel(dataSources = {}) {
   const candidates = Array.isArray(options.candidates) && options.candidates.length
     ? options.candidates
     : FALLBACK_OPTION_SOURCES;
-  const status = String(fundamentals.status || 'not_configured').toLowerCase();
-  const statusTone = status === 'active' ? 'active' : (status === 'degraded' ? 'degraded' : 'idle');
+  const fundamentalsTone = sourceStatusTone(fundamentals.status || 'not_configured');
+  const optionsTone = sourceStatusTone(options.status || 'placeholder');
+  const optionsProvider = options.provider || 'Yahoo/yfinance / MarketData.app';
+  const broad = options.broad || {};
+  const refinement = options.refinement || {};
   return `
     <section class="strength-source-panel">
       <div class="section-card-heading">
@@ -158,13 +182,27 @@ function renderDataSourcePanel(dataSources = {}) {
         <div class="strength-source-row">
           <span>基本面</span>
           <strong>Finnhub</strong>
-          <em class="is-${statusTone}">${sourceStatusLabel(fundamentals.status)}</em>
+          <em class="is-${fundamentalsTone}">${sourceStatusLabel(fundamentals.status)}</em>
         </div>
         <div class="strength-source-row">
           <span>期权热度</span>
-          <strong>IV / Flow</strong>
-          <em class="is-idle">待接入</em>
+          <strong>${escapeHtml(optionsProvider)}</strong>
+          <em class="is-${optionsTone}">${sourceStatusLabel(options.status || 'placeholder')}</em>
         </div>
+        ${broad.provider ? `
+          <div class="strength-source-row">
+            <span>期权粗筛</span>
+            <strong>${escapeHtml(broad.provider)}</strong>
+            <em class="is-${sourceStatusTone(broad.status || 'placeholder')}">${sourceStatusLabel(broad.status || 'placeholder')}</em>
+          </div>
+        ` : ''}
+        ${refinement.provider ? `
+          <div class="strength-source-row">
+            <span>前排精修</span>
+            <strong>${escapeHtml(refinement.provider)}</strong>
+            <em class="is-${sourceStatusTone(refinement.status || 'placeholder')}">${sourceStatusLabel(refinement.status || 'placeholder')}</em>
+          </div>
+        ` : ''}
       </div>
       <div class="strength-option-source-list" aria-label="可选免费期权数据源">
         ${candidates.slice(0, 4).map((item) => `
@@ -187,8 +225,14 @@ function renderResultCard(row, index) {
   const tags = Array.isArray(row.tags) ? row.tags : [];
   const quality = Number(row.data_quality);
   const optionStatus = row.option_context?.source_status || 'placeholder';
+  const optionHeat = Number(row.option_heat_score);
+  const avgIv = Number(row.option_context?.iv_average);
+  const optionProvider = row.option_context?.provider || '';
   const metaChips = [
     Number.isFinite(quality) ? `数据覆盖 ${quality}%` : '',
+    optionStatus === 'active' && optionProvider ? `期权源 ${optionProvider}` : '',
+    optionStatus === 'active' && Number.isFinite(optionHeat) ? `期权热度 ${formatScore(optionHeat)}` : '',
+    optionStatus === 'active' && Number.isFinite(avgIv) ? `IV ${(avgIv * 100).toFixed(1)}%` : '',
     optionStatus === 'placeholder' ? '期权源 待接入' : '',
     row.fundamental_score != null ? `基本面 ${formatScore(row.fundamental_score)}` : '',
   ].filter(Boolean);
