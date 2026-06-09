@@ -2997,12 +2997,17 @@ body {
   padding: 18px;
 }
 
-.strength-data-note {
+.strength-data-note,
+.strength-cache-note {
   max-width: 760px;
   margin: 8px 0 0;
   font-size: 12px;
   font-weight: 750;
   line-height: 1.55;
+}
+
+.strength-cache-note {
+  margin-top: 4px;
 }
 
 .strength-source-panel {

@@ -8,10 +8,15 @@ const inflight = new Map();   // key → Promise (dedup concurrent requests)
 // Hard cap on in-memory cache to prevent unbounded growth in long sessions.
 const CACHE_MAX = 200;
 
+function markClientCached(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  return { ...data, _client_cached: true };
+}
+
 function cached(key, ttl, fn) {
   const now = Date.now();
   const entry = cache.get(key);
-  if (entry && now - entry.ts < ttl) return Promise.resolve(entry.data);
+  if (entry && now - entry.ts < ttl) return Promise.resolve(markClientCached(entry.data));
   if (inflight.has(key)) return inflight.get(key);
   const p = fn()
     .then(data => {
@@ -82,6 +87,7 @@ const T = {
   CHART:   60 * 1000,        // 1 min
   SIGNALS: 5  * 60 * 1000,   // 5 min — daily data
   SLOW:    10 * 60 * 1000,   // 10 min — expensive endpoints
+  STRENGTH: 15 * 60 * 1000,   // 15 min — full screener scan
   STATIC:  60 * 60 * 1000,   // 1 hour — rarely changes
   OPTION:  30 * 1000,        // 30 s — for chain updates
 };
@@ -138,11 +144,13 @@ export const api = {
 
   strengthScan(params = {}) {
     const query = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
+    const scanParams = { ...params };
+    if (!scanParams.cache_ttl) scanParams.cache_ttl = 15 * 60;
+    Object.entries(scanParams).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== '') query.set(key, value);
     });
     const suffix = query.toString() ? `?${query}` : '';
-    return cached(`strength:${suffix}`, T.SLOW, () => fetchJson(`${API_BASE}/strength/scan${suffix}`, undefined, 180 * 1000));
+    return cached(`strength:${suffix}`, T.STRENGTH, () => fetchJson(`${API_BASE}/strength/scan${suffix}`, undefined, 180 * 1000));
   },
 
   strengthStock(ticker, profile = 'balanced') {

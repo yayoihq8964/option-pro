@@ -192,6 +192,16 @@ function renderDataNote(dataSources = {}) {
   `;
 }
 
+function renderCacheNote(payload = {}) {
+  if (!payload.cache_expires_at) return '';
+  const expires = new Date(payload.cache_expires_at);
+  const timeLabel = Number.isNaN(expires.getTime())
+    ? ''
+    : expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const status = payload._cached || payload._client_cached ? '缓存命中' : '刚刚刷新';
+  return `<p class="detail-muted strength-cache-note">${status}${timeLabel ? ` · 保留到 ${escapeHtml(timeLabel)}` : ''}</p>`;
+}
+
 function renderDataSourcePanel(dataSources = {}) {
   const fundamentals = dataSources.fundamentals || {};
   const options = dataSources.options || {};
@@ -327,6 +337,7 @@ function renderResults(payload) {
         <span class="label-caps">候选榜单</span>
         <h2>${rows.length} 只标的</h2>
         ${renderDataNote(payload.data_sources)}
+        ${renderCacheNote(payload)}
       </div>
       <div class="strength-result-list">
         ${rows.map(renderResultCard).join('')}
@@ -417,7 +428,7 @@ function bindEvents() {
     state.top = Number(event.target.value) || 30;
     runScan();
   });
-  document.getElementById('strength-run')?.addEventListener('click', () => runScan(true));
+  document.getElementById('strength-run')?.addEventListener('click', () => runScan());
   document.querySelectorAll('.strength-sector-item').forEach((button) => {
     button.addEventListener('click', () => {
       state.sectorId = button.dataset.sectorId || '';
@@ -437,28 +448,16 @@ async function loadProfiles() {
   }
 }
 
-async function runScan(force = false) {
+async function runScan() {
   state.loading = true;
   renderShell();
   try {
-    if (force) {
-      // Cache is intentionally short-lived server-side; changing the timestamp
-      // avoids only the frontend memory cache for explicit manual refreshes.
-      state.payload = await api.strengthScan({
-        timeframe: state.timeframe,
-        profile: state.profile,
-        top: state.top,
-        sector_id: state.sectorId,
-        _ts: Date.now(),
-      });
-    } else {
-      state.payload = await api.strengthScan({
-        timeframe: state.timeframe,
-        profile: state.profile,
-        top: state.top,
-        sector_id: state.sectorId,
-      });
-    }
+    state.payload = await api.strengthScan({
+      timeframe: state.timeframe,
+      profile: state.profile,
+      top: state.top,
+      sector_id: state.sectorId,
+    });
   } catch (error) {
     state.payload = { rows: [], sectors: [], market_regime: {}, error: error.message };
   } finally {

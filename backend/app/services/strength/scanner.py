@@ -1102,8 +1102,13 @@ async def scan_strength(
             min_avg_dollar_volume=min_avg_dollar_volume,
         )
 
-    cached = await cache.get_or_set(key, ttl, produce)
-    return cached
+    payload, was_cached, expires_at = await cache.get_or_set_with_meta(key, ttl, produce)
+    return {
+        **payload,
+        "_cached": was_cached,
+        "cache_ttl_seconds": ttl,
+        "cache_expires_at": datetime.fromtimestamp(expires_at, timezone.utc).isoformat(),
+    }
 
 
 async def sector_strength(period: str = "3mo") -> dict[str, Any]:
