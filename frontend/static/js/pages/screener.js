@@ -10,6 +10,13 @@ const state = {
   profiles: null,
 };
 
+const FALLBACK_OPTION_SOURCES = [
+  { name: 'MarketData.app', url: 'https://www.marketdata.app/docs/api/', access: 'Free Forever', note: '延迟期权链/报价，100 daily credits' },
+  { name: 'Tradier', url: 'https://docs.tradier.com/reference/brokerage-api-markets-get-options-chains.md', access: 'Developer', note: '期权链、IV/Greeks、expiration/strike' },
+  { name: 'tastytrade', url: 'https://tastytrade.com/api/', access: 'Broker', note: '实时报价与期权链，需要账户登录' },
+  { name: 'Alpha Vantage', url: 'https://www.alphavantage.co/documentation/', access: 'Free key', note: '有期权端点，完整历史/实时多为 premium' },
+];
+
 function escapeHtml(value = '') {
   return String(value).replace(/[&<>'"]/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -39,6 +46,16 @@ function scoreTone(score) {
   if (value >= 72) return 'strong';
   if (value >= 58) return 'watch';
   return 'weak';
+}
+
+function sourceStatusLabel(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'active') return '已启用';
+  if (normalized === 'degraded') return '降级';
+  if (normalized === 'not_configured') return '未配置';
+  if (normalized === 'placeholder') return '待接入';
+  if (normalized === 'disabled') return '关闭';
+  return '未知';
 }
 
 function navigateToDetail(ticker) {
@@ -104,12 +121,77 @@ function renderSectorRail(sectors = []) {
   `;
 }
 
+function renderDataNote(dataSources = {}) {
+  const fundamentals = dataSources.fundamentals || {};
+  const options = dataSources.options || {};
+  const candidates = Array.isArray(options.candidates) && options.candidates.length
+    ? options.candidates
+    : FALLBACK_OPTION_SOURCES;
+  const names = candidates.slice(0, 4).map((item) => item.name).join(' / ');
+  return `
+    <p class="detail-muted strength-data-note">
+      价格源 Yahoo/yfinance · Finnhub ${sourceStatusLabel(fundamentals.status)} · 期权热度为中性占位，可接入 ${escapeHtml(names)}
+    </p>
+  `;
+}
+
+function renderDataSourcePanel(dataSources = {}) {
+  const fundamentals = dataSources.fundamentals || {};
+  const options = dataSources.options || {};
+  const candidates = Array.isArray(options.candidates) && options.candidates.length
+    ? options.candidates
+    : FALLBACK_OPTION_SOURCES;
+  const status = String(fundamentals.status || 'not_configured').toLowerCase();
+  const statusTone = status === 'active' ? 'active' : (status === 'degraded' ? 'degraded' : 'idle');
+  return `
+    <section class="strength-source-panel">
+      <div class="section-card-heading">
+        <span class="label-caps">数据源</span>
+        <h2>信号输入</h2>
+      </div>
+      <div class="strength-source-stack">
+        <div class="strength-source-row">
+          <span>价格/量能</span>
+          <strong>Yahoo/yfinance</strong>
+          <em class="is-active">已启用</em>
+        </div>
+        <div class="strength-source-row">
+          <span>基本面</span>
+          <strong>Finnhub</strong>
+          <em class="is-${statusTone}">${sourceStatusLabel(fundamentals.status)}</em>
+        </div>
+        <div class="strength-source-row">
+          <span>期权热度</span>
+          <strong>IV / Flow</strong>
+          <em class="is-idle">待接入</em>
+        </div>
+      </div>
+      <div class="strength-option-source-list" aria-label="可选免费期权数据源">
+        ${candidates.slice(0, 4).map((item) => `
+          <a href="${escapeHtml(item.url || '#')}" target="_blank" rel="noreferrer">
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.access || '')}</span>
+          </a>
+        `).join('')}
+      </div>
+      <p class="strength-source-note">${escapeHtml(options.message || '期权热度当前为中性占位，待接入真实期权流/IV历史。')}</p>
+    </section>
+  `;
+}
+
 function renderResultCard(row, index) {
   const tone = scoreTone(row.final_score);
   const changeTone = Number(row.change_pct) >= 0 ? 'up' : 'down';
   const warnings = Array.isArray(row.warnings) ? row.warnings : [];
   const reasons = Array.isArray(row.reasons) ? row.reasons : [];
   const tags = Array.isArray(row.tags) ? row.tags : [];
+  const quality = Number(row.data_quality);
+  const optionStatus = row.option_context?.source_status || 'placeholder';
+  const metaChips = [
+    Number.isFinite(quality) ? `数据覆盖 ${quality}%` : '',
+    optionStatus === 'placeholder' ? '期权源 待接入' : '',
+    row.fundamental_score != null ? `基本面 ${formatScore(row.fundamental_score)}` : '',
+  ].filter(Boolean);
   return `
     <article class="strength-result-card strength-result-card--${tone}">
       <button type="button" class="strength-result-main" data-ticker="${escapeHtml(row.ticker)}" aria-label="打开 ${escapeHtml(row.ticker)} 详情">
@@ -136,6 +218,7 @@ function renderResultCard(row, index) {
           ${renderScoreBar(row.score_long, '长')}
           ${renderScoreBar(row.sector_score, '板块')}
         </div>
+        ${metaChips.length ? `<div class="strength-meta-row">${metaChips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join('')}</div>` : ''}
         <div class="strength-reasons">
           ${reasons.slice(0, 3).map((reason) => `<span>${escapeHtml(reason)}</span>`).join('')}
         </div>
@@ -158,6 +241,7 @@ function renderResults(payload) {
       <div class="section-card-heading">
         <span class="label-caps">候选榜单</span>
         <h2>${rows.length} 只标的</h2>
+        ${renderDataNote(payload.data_sources)}
       </div>
       <div class="strength-result-list">
         ${rows.map(renderResultCard).join('')}
@@ -223,6 +307,7 @@ function renderShell() {
         </div>
         <aside class="strength-aside">
           ${renderMarketCard(payload.market_regime)}
+          ${renderDataSourcePanel(payload.data_sources)}
           ${renderSectorRail(payload.sectors || [])}
         </aside>
       </div>

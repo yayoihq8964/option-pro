@@ -10,6 +10,11 @@ import yfinance as yf
 from app.services import yahoo
 from app.services.cache import cache
 from app.services.sectors import SECTORS
+from app.services.strength.finnhub import (
+    OPTION_DATA_SOURCE_CANDIDATES,
+    enrich_rows_with_finnhub,
+    finnhub_is_enabled,
+)
 from app.services.zh_names import get_zh_name
 
 TIMEFRAMES = ("short", "mid", "long", "all")
@@ -413,7 +418,7 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
         if not reasons:
             reasons.append("综合强度处于股票池前列")
         if option_heat_score == 50:
-            warnings.append("期权热度为中性占位，待接入真实期权流/IV历史")
+            warnings.append("期权热度待接入")
 
         quality_inputs = [
             row.get("return_20d"), row.get("return_63d"), row.get("return_126d"),
@@ -453,7 +458,14 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
                 "option_heat_score": round(option_heat_score, 1),
                 "iv_rank": None,
                 "iv_label": "待接入",
-                "warning": "当前为P0中性占位",
+                "source_status": "placeholder",
+                "warning": "当前为中性占位，待接入真实期权流/IV历史",
+            },
+            "data_sources": {
+                "prices": "Yahoo/yfinance",
+                "technicals": "Yahoo/yfinance",
+                "fundamentals": "not_configured",
+                "options": "placeholder",
             },
         })
 
@@ -534,6 +546,7 @@ def _scan_sync(
         scored.sort(key=lambda item: item.get("final_score") or 0, reverse=True)
 
     limited = scored[:top]
+    finnhub_status = enrich_rows_with_finnhub(limited)
     return {
         "as_of": _now_iso(),
         "params": {
@@ -553,6 +566,20 @@ def _scan_sync(
         "results": limited,
         "rows": limited,
         "sectors": _sector_strength(scored),
+        "data_sources": {
+            "prices": {
+                "provider": "Yahoo/yfinance",
+                "status": "active",
+                "message": "日线价格、成交量与技术指标输入",
+            },
+            "fundamentals": finnhub_status,
+            "options": {
+                "provider": "planned",
+                "status": "placeholder",
+                "message": "期权热度当前为中性占位，待接入真实期权流/IV历史",
+                "candidates": OPTION_DATA_SOURCE_CANDIDATES,
+            },
+        },
     }
 
 
@@ -567,7 +594,7 @@ async def scan_strength(
     min_avg_dollar_volume: float = 10_000_000,
     ttl: int = 600,
 ) -> dict[str, Any]:
-    key = f"strength:{universe}:{timeframe}:{profile}:{top}:{sector_id}:{min_price}:{min_avg_dollar_volume}"
+    key = f"strength:{universe}:{timeframe}:{profile}:{top}:{sector_id}:{min_price}:{min_avg_dollar_volume}:fh:{int(finnhub_is_enabled())}"
 
     async def produce() -> dict[str, Any]:
         import asyncio
