@@ -5,9 +5,12 @@ from typing import Any
 
 import pandas as pd
 
+from app.services.strength.relative_spreads import compute_spread_matrix
+
 MARKET_BENCHMARKS = (
-    "SPY", "QQQ", "IWM", "RSP", "^VIX", "HYG", "TLT", "^TNX",
+    "SPY", "QQQ", "IWM", "RSP", "^VIX", "HYG", "IEF", "TLT", "^TNX", "GLD",
     "XLK", "XLF", "XLV", "XLE", "XLI", "XLC", "XLY", "XLP", "XLU", "XLRE", "XLB",
+    "SOXX", "SMH",
 )
 
 SECTOR_ETFS = ("XLK", "XLF", "XLV", "XLE", "XLI", "XLC", "XLY", "XLP", "XLU", "XLRE", "XLB")
@@ -278,7 +281,7 @@ def _compute_risk_appetite_score(closes: dict[str, pd.Series]) -> tuple[float, f
     }
 
 
-def _rules_for_score(score: float, breadth_score: float, risk_penalty: float) -> tuple[dict[str, float], list[str]]:
+def _rules_for_score(score: float, breadth_score: float, risk_penalty: float, risk_on_score: float) -> tuple[dict[str, float], list[str]]:
     warnings: list[str] = []
     if score >= 75:
         rules = {
@@ -286,6 +289,7 @@ def _rules_for_score(score: float, breadth_score: float, risk_penalty: float) ->
             "relative_strength_weight_multiplier": 1.00,
             "long_trend_weight_multiplier": 1.00,
             "breakout_weight_multiplier": 1.15,
+            "sector_strength_weight_multiplier": 1.10,
             "option_heat_weight_multiplier": 1.00,
             "risk_penalty_multiplier": 1.00,
         }
@@ -295,6 +299,7 @@ def _rules_for_score(score: float, breadth_score: float, risk_penalty: float) ->
             "relative_strength_weight_multiplier": 1.05,
             "long_trend_weight_multiplier": 1.05,
             "breakout_weight_multiplier": .95,
+            "sector_strength_weight_multiplier": 1.03,
             "option_heat_weight_multiplier": .90,
             "risk_penalty_multiplier": 1.10,
         }
@@ -304,6 +309,7 @@ def _rules_for_score(score: float, breadth_score: float, risk_penalty: float) ->
             "relative_strength_weight_multiplier": 1.12,
             "long_trend_weight_multiplier": 1.12,
             "breakout_weight_multiplier": .75,
+            "sector_strength_weight_multiplier": 1.00,
             "option_heat_weight_multiplier": .80,
             "risk_penalty_multiplier": 1.20,
         }
@@ -313,6 +319,7 @@ def _rules_for_score(score: float, breadth_score: float, risk_penalty: float) ->
             "relative_strength_weight_multiplier": 1.18,
             "long_trend_weight_multiplier": 1.25,
             "breakout_weight_multiplier": .50,
+            "sector_strength_weight_multiplier": .92,
             "option_heat_weight_multiplier": .60,
             "risk_penalty_multiplier": 1.50,
         }
@@ -322,6 +329,14 @@ def _rules_for_score(score: float, breadth_score: float, risk_penalty: float) ->
     if risk_penalty >= 10:
         rules["option_heat_weight_multiplier"] *= .85
         warnings.append("波动或信用压力偏高，期权热度已降权")
+    if risk_on_score < 45:
+        rules["breakout_weight_multiplier"] *= .85
+        rules["option_heat_weight_multiplier"] *= .85
+        warnings.append("风险偏好价差偏弱，突破与期权信号已降权")
+    elif score >= 65 and risk_on_score >= 70:
+        rules["breakout_weight_multiplier"] *= 1.08
+        rules["sector_strength_weight_multiplier"] *= 1.08
+        warnings.append("风险偏好价差支持进攻型强势股")
     return {key: round(value, 3) for key, value in rules.items()}, warnings
 
 
@@ -332,11 +347,14 @@ def compute_market_regime(index_data: dict[str, pd.DataFrame]) -> dict[str, Any]
     volume_score, volume = _compute_volume_score(index_data, closes)
     breadth_score, breadth = _compute_breadth_score(closes)
     risk_appetite_score, risk_penalty, risk = _compute_risk_appetite_score(closes)
+    spread_matrix = compute_spread_matrix(index_data)
+    risk_on_spread_score = float(spread_matrix.get("score") or 50.0)
     raw_score = (
-        trend_score * .30 +
-        momentum_score * .25 +
+        trend_score * .25 +
+        risk_on_spread_score * .25 +
         breadth_score * .20 +
-        volume_score * .15 +
+        momentum_score * .10 +
+        volume_score * .10 +
         risk_appetite_score * .10 -
         risk_penalty * .35
     )
@@ -349,7 +367,8 @@ def compute_market_regime(index_data: dict[str, pd.DataFrame]) -> dict[str, Any]
         label = "中性震荡"
     else:
         label = "弱势高风险"
-    rules, warnings = _rules_for_score(score, breadth_score, risk_penalty)
+    rules, warnings = _rules_for_score(score, breadth_score, risk_penalty, risk_on_spread_score)
+    warnings = [*warnings, *spread_matrix.get("warnings", [])]
     return {
         "score": score,
         "label": label,
@@ -358,14 +377,29 @@ def compute_market_regime(index_data: dict[str, pd.DataFrame]) -> dict[str, Any]
         "market_breadth_score": breadth_score,
         "market_volume_score": volume_score,
         "risk_appetite_score": risk_appetite_score,
+        "risk_on_spread_score": round(risk_on_spread_score, 1),
+        "risk_on_spread_label": spread_matrix.get("label"),
         "market_risk_penalty": risk_penalty,
         "rules": rules,
-        "warnings": warnings,
+        "warnings": list(dict.fromkeys(warnings))[:6],
         "trend": trend,
         "momentum": momentum,
         "volume": volume,
         "breadth": breadth,
         "risk": risk,
+        "spread_matrix": spread_matrix.get("spreads", {}),
+        "market_context": {
+            "score": score,
+            "label": label,
+            "trend_momentum_score": round(trend_score * .58 + momentum_score * .42, 1),
+            "breadth_score": breadth_score,
+            "risk_on_spread_score": round(risk_on_spread_score, 1),
+            "liquidity_credit_score": risk_appetite_score,
+            "sentiment_score": risk_appetite_score,
+            "sector_flow_score": round((spread_matrix.get("spreads", {}).get("soxx_xlk", {}).get("score") or 50), 1),
+            "valuation_status": "not_available",
+            "valuation_risk_penalty": 0.0,
+        },
         "spy_20d": momentum.get("spy_20d"),
         "qqq_20d": momentum.get("qqq_20d"),
         "iwm_20d": momentum.get("iwm_20d"),

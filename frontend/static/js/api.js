@@ -51,9 +51,9 @@ function getAuthHeaders(initHeaders = {}) {
   return headers;
 }
 
-async function fetchJson(url, init) {
+async function fetchJson(url, init, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const headers = getAuthHeaders(init?.headers);
     const response = await fetch(url, { ...init, headers, signal: controller.signal });
@@ -66,7 +66,7 @@ async function fetchJson(url, init) {
     return await response.json();
   } catch (e) {
     if (e.name === 'AbortError') {
-      throw new Error(`Request timeout (${REQUEST_TIMEOUT_MS / 1000}s): ${url}`);
+      throw new Error(`Request timeout (${timeoutMs / 1000}s): ${url}`);
     }
     throw e;
   } finally {
@@ -142,7 +142,7 @@ export const api = {
       if (value !== undefined && value !== null && value !== '') query.set(key, value);
     });
     const suffix = query.toString() ? `?${query}` : '';
-    return cached(`strength:${suffix}`, T.SLOW, () => fetchJson(`${API_BASE}/strength/scan${suffix}`));
+    return cached(`strength:${suffix}`, T.SLOW, () => fetchJson(`${API_BASE}/strength/scan${suffix}`, undefined, 180 * 1000));
   },
 
   strengthStock(ticker, profile = 'balanced') {

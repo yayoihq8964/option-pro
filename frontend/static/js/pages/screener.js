@@ -3,7 +3,7 @@ import { api } from '../api.js';
 const state = {
   timeframe: 'all',
   profile: 'balanced',
-  top: 30,
+  top: 20,
   sectorId: '',
   loading: false,
   payload: null,
@@ -96,6 +96,7 @@ function renderMarketCard(market = {}) {
         <span><small>动量</small><b class="mono">${formatScore(market.market_momentum_score)}</b></span>
         <span><small>宽度</small><b class="mono">${formatScore(market.market_breadth_score)}</b></span>
         <span><small>量能</small><b class="mono">${formatScore(market.market_volume_score)}</b></span>
+        <span><small>价差</small><b class="mono">${formatScore(market.risk_on_spread_score)}</b></span>
         <span><small>风险偏好</small><b class="mono">${formatScore(market.risk_appetite_score)}</b></span>
       </div>
       <div class="strength-market-grid">
@@ -105,6 +106,41 @@ function renderMarketCard(market = {}) {
         <span><small>VIX</small><b class="mono">${market.vix == null ? '—' : Number(market.vix).toFixed(2)}</b></span>
       </div>
       ${warnings.length ? `<div class="strength-market-warnings">${warnings.slice(0, 2).map((warning) => `<span>${escapeHtml(warning)}</span>`).join('')}</div>` : ''}
+    </section>
+  `;
+}
+
+function renderSpreadPanel(payload = {}) {
+  const market = payload.market_regime || {};
+  const spreads = payload.spread_matrix || market.spread_matrix || {};
+  const order = ['qqq_spy', 'xlk_spy', 'soxx_xlk', 'iwm_spy', 'rsp_spy', 'xly_xlp', 'hyg_ief', 'spy_gld'];
+  const items = order.map((key) => spreads[key]).filter(Boolean);
+  if (!items.length && !market.risk_on_spread_score) return '';
+  return `
+    <section class="strength-spread-panel">
+      <div class="section-card-heading">
+        <span class="label-caps">价差矩阵</span>
+        <h2>${escapeHtml(market.risk_on_spread_label || '风险偏好价差')}</h2>
+      </div>
+      <div class="strength-spread-score">
+        <strong class="mono font-data-mono" data-numeric>${formatScore(market.risk_on_spread_score)}</strong>
+        <span>${escapeHtml(market.market_context?.valuation_status === 'not_available' ? '估值暂不参与短线触发' : 'Market Context')}</span>
+      </div>
+      <div class="strength-spread-list">
+        ${items.slice(0, 8).map((item) => {
+          const score = Number(item.score);
+          const tone = score >= 65 ? 'up' : (score < 45 ? 'down' : '');
+          return `
+            <div class="strength-spread-item">
+              <span>
+                <strong>${escapeHtml(item.name || item.key)}</strong>
+                <small>${escapeHtml(item.label || '中性')}</small>
+              </span>
+              <em class="mono ${tone}" data-numeric>${formatScore(item.score)}</em>
+            </div>
+          `;
+        }).join('')}
+      </div>
     </section>
   `;
 }
@@ -228,8 +264,12 @@ function renderResultCard(row, index) {
   const optionHeat = Number(row.option_heat_score);
   const avgIv = Number(row.option_context?.iv_average);
   const optionProvider = row.option_context?.provider || '';
+  const volumeTruth = row.volume_truth || row.vol_price_match || {};
+  const effortResult = Number(volumeTruth.effort_result_ratio);
   const metaChips = [
     Number.isFinite(quality) ? `数据覆盖 ${quality}%` : '',
+    volumeTruth.setup_label && volumeTruth.status === 'active' ? `量价 ${volumeTruth.setup_label}` : '',
+    Number.isFinite(effortResult) ? `努力/结果 ${effortResult.toFixed(2)}` : '',
     optionStatus === 'active' && optionProvider ? `期权源 ${optionProvider}` : '',
     optionStatus === 'active' && Number.isFinite(optionHeat) ? `期权热度 ${formatScore(optionHeat)}` : '',
     optionStatus === 'active' && Number.isFinite(avgIv) ? `IV ${(avgIv * 100).toFixed(1)}%` : '',
@@ -260,6 +300,7 @@ function renderResultCard(row, index) {
           ${renderScoreBar(row.score_short, '短')}
           ${renderScoreBar(row.score_mid, '中')}
           ${renderScoreBar(row.score_long, '长')}
+          ${renderScoreBar(row.breakout_quality_score ?? row.breakdown?.breakout, '突破')}
           ${renderScoreBar(row.sector_score, '板块')}
         </div>
         ${metaChips.length ? `<div class="strength-meta-row">${metaChips.map((chip) => `<span>${escapeHtml(chip)}</span>`).join('')}</div>` : ''}
@@ -351,6 +392,7 @@ function renderShell() {
         </div>
         <aside class="strength-aside">
           ${renderMarketCard(payload.market_regime)}
+          ${renderSpreadPanel(payload)}
           ${renderDataSourcePanel(payload.data_sources)}
           ${renderSectorRail(payload.sectors || [])}
         </aside>

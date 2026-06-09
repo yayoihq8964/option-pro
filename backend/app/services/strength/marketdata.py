@@ -8,6 +8,7 @@ import httpx
 
 from app.config import Settings, get_settings
 
+PROVIDER = "MarketData.app"
 _CACHE: dict[str, tuple[float, dict[str, Any] | None]] = {}
 _TTL_SECONDS = 60 * 30
 
@@ -81,6 +82,24 @@ def _first_number(payload: dict[str, Any], key: str) -> float | None:
             if number is not None:
                 return number
     return _safe_float(values, 4)
+
+
+def _request_error_message(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response is not None:
+        status_code = exc.response.status_code
+        detail = ""
+        try:
+            payload = exc.response.json()
+            if isinstance(payload, dict):
+                detail = str(payload.get("errmsg") or payload.get("message") or payload.get("error") or "").strip()
+        except Exception:
+            detail = exc.response.text[:120].strip()
+        if status_code == 402 and "feed not available" in detail.lower():
+            detail = "当前 MarketData.app 套餐不包含该期权 feed"
+        if detail:
+            return f"HTTP {status_code}: {detail}"
+        return f"HTTP {status_code}"
+    return exc.__class__.__name__
 
 
 def _request_chain(client: httpx.Client, base_url: str, symbol: str, settings: Settings) -> dict[str, Any] | None:
@@ -189,14 +208,25 @@ def enrich_rows_with_marketdata_options(rows: list[dict[str, Any]], settings: Se
     if not token:
         return _empty_status()
 
-    limit = max(0, min(int(cfg.marketdata_options_enrich_limit or 0), len(rows)))
-    if limit <= 0:
+    if not rows:
+        return {
+            "provider": PROVIDER,
+            "status": "skipped",
+            "configured": True,
+            "enriched": 0,
+            "message": "基础筛选暂无候选，MarketData.app 期权增强未运行",
+        }
+
+    configured_limit = max(0, int(cfg.marketdata_options_enrich_limit or 0))
+    if configured_limit <= 0:
         return _empty_status("disabled", "MARKETDATA_OPTIONS_ENRICH_LIMIT 为 0，已跳过期权增强")
+    limit = min(configured_limit, len(rows))
 
     base_url = str(cfg.marketdata_base_url).rstrip("/")
     timeout = min(float(cfg.request_timeout or 20.0), 8.0)
     enriched = 0
     failed = 0
+    last_error = ""
 
     try:
         with httpx.Client(timeout=timeout) as client:
@@ -227,8 +257,10 @@ def enrich_rows_with_marketdata_options(rows: list[dict[str, Any]], settings: Se
                     if metrics.get("total_volume", 0) <= 0 and metrics.get("total_open_interest", 0) <= 0:
                         row.setdefault("warnings", []).append("期权链流动性偏低")
                     enriched += 1
-                except Exception:
+                except Exception as exc:
                     failed += 1
+                    if not last_error:
+                        last_error = _request_error_message(exc)
     except Exception as exc:
         return {
             "provider": "MarketData.app",
@@ -236,10 +268,15 @@ def enrich_rows_with_marketdata_options(rows: list[dict[str, Any]], settings: Se
             "configured": True,
             "enriched": enriched,
             "failed": max(failed, 1),
-            "message": f"MarketData.app 请求失败，期权热度已降级：{exc.__class__.__name__}",
+            "message": f"MarketData.app 请求失败，期权热度已降级：{_request_error_message(exc)}",
         }
 
     status = "active" if enriched else "degraded"
+    degraded_message = (
+        f"MarketData.app 已配置，但期权链请求失败：{last_error}"
+        if last_error
+        else "MarketData.app 已配置，但本次未拿到可用期权链"
+    )
     return {
         "provider": "MarketData.app",
         "status": status,
@@ -249,5 +286,5 @@ def enrich_rows_with_marketdata_options(rows: list[dict[str, Any]], settings: Se
         "mode": (cfg.marketdata_option_mode or "delayed").strip() or "default",
         "dte": int(cfg.marketdata_option_dte or 30),
         "strike_limit": int(cfg.marketdata_option_strike_limit or 8),
-        "message": "MarketData.app 期权链增强已启用" if enriched else "MarketData.app 已配置，但本次未拿到可用期权链",
+        "message": "MarketData.app 期权链增强已启用" if enriched else degraded_message,
     }

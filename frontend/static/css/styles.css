@@ -2772,6 +2772,7 @@ body {
 .strength-results-panel,
 .strength-side-panel,
 .strength-market-card,
+.strength-spread-panel,
 .strength-source-panel {
   background: var(--color-panel);
   border: 1px solid rgba(20, 22, 25, .045);
@@ -2781,6 +2782,7 @@ body {
 
 .strength-results-panel,
 .strength-side-panel,
+.strength-spread-panel,
 .strength-source-panel {
   padding: 18px;
 }
@@ -3008,6 +3010,81 @@ body {
   gap: 14px;
 }
 
+.strength-spread-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.strength-spread-score {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--color-emerald) 7%, var(--color-container-low));
+}
+
+.strength-spread-score strong {
+  font-size: 32px;
+  line-height: .95;
+  font-weight: 950;
+}
+
+.strength-spread-score span {
+  max-width: 150px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.strength-spread-list {
+  display: grid;
+  gap: 8px;
+}
+
+.strength-spread-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 9px 10px;
+  border-radius: var(--radius);
+  background: var(--color-container-low);
+}
+
+.strength-spread-item span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.strength-spread-item strong {
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.strength-spread-item small {
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.strength-spread-item em {
+  min-width: 44px;
+  color: var(--color-muted);
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 950;
+  text-align: right;
+}
+
 .strength-source-stack {
   display: grid;
   gap: 8px;
@@ -3134,7 +3211,7 @@ body {
 
 .strength-market-metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 

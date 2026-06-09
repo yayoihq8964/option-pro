@@ -320,8 +320,17 @@ def enrich_rows_with_yahoo_options(
             "message": "YAHOO_OPTIONS_ENABLED=false，Yahoo 期权粗筛已关闭",
         }
 
-    limit = max(0, min(int(cfg.yahoo_options_enrich_limit or 0), len(rows)))
-    if limit <= 0:
+    if not rows:
+        return {
+            "provider": PROVIDER,
+            "status": "skipped",
+            "configured": True,
+            "enriched": 0,
+            "message": "基础筛选暂无候选，Yahoo 期权粗筛未运行",
+        }
+
+    configured_limit = max(0, int(cfg.yahoo_options_enrich_limit or 0))
+    if configured_limit <= 0:
         return {
             "provider": PROVIDER,
             "status": "disabled",
@@ -329,6 +338,8 @@ def enrich_rows_with_yahoo_options(
             "enriched": 0,
             "message": "YAHOO_OPTIONS_ENRICH_LIMIT 为 0，Yahoo 期权粗筛已跳过",
         }
+    display_cap = max(int(display_top * 1.5), display_top + 10, 20)
+    limit = min(configured_limit, display_cap, len(rows))
 
     option_pool = _build_option_pool(rows, limit, display_top)
     raw_metrics: list[dict[str, Any]] = []

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 import pandas as pd
 import yfinance as yf
 
@@ -21,6 +23,7 @@ from app.services.strength.marketdata import (
     marketdata_is_enabled,
 )
 from app.services.strength.market_regime import MARKET_BENCHMARKS, compute_market_regime
+from app.services.strength.vol_price_match import compute_vol_price_match
 from app.services.strength.yahoo_options import (
     enrich_rows_with_yahoo_options,
     yahoo_options_is_enabled,
@@ -117,6 +120,276 @@ def _theme_universe(sector_id: str | None = None) -> tuple[list[str], dict[str, 
     return list(dict.fromkeys(tickers)), sector_meta
 
 
+def _period_to_days(period: str) -> int:
+    period = (period or "1y").strip().lower()
+    if period.endswith("y"):
+        return max(365, int(float(period[:-1] or 1) * 365))
+    if period.endswith("mo"):
+        return max(31, int(float(period[:-2] or 1) * 31))
+    if period.endswith("d"):
+        return max(1, int(float(period[:-1] or 1)))
+    return 365
+
+
+def _history_status(
+    *,
+    provider: str,
+    status: str,
+    message: str,
+    fallback_symbols: list[str] | None = None,
+    missing_symbols: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "status": status,
+        "message": message,
+        "fallback_symbols": fallback_symbols or [],
+        "missing_symbols": missing_symbols or [],
+    }
+
+
+def _attach_history_status(df: pd.DataFrame, status: dict[str, Any]) -> pd.DataFrame:
+    df.attrs["price_source"] = status
+    return df
+
+
+def _empty_history_with_status(status: dict[str, Any]) -> pd.DataFrame:
+    return _attach_history_status(pd.DataFrame(), status)
+
+
+def _finnhub_candle_frame(symbol: str, payload: dict[str, Any]) -> pd.DataFrame:
+    if payload.get("s") != "ok":
+        return pd.DataFrame()
+    times = payload.get("t") or []
+    closes = payload.get("c") or []
+    opens = payload.get("o") or []
+    highs = payload.get("h") or []
+    lows = payload.get("l") or []
+    volumes = payload.get("v") or []
+    size = min(len(times), len(opens), len(highs), len(lows), len(closes), len(volumes))
+    if size <= 0:
+        return pd.DataFrame()
+
+    index = pd.to_datetime(times[:size], unit="s", utc=True).tz_convert(None)
+    frame = pd.DataFrame(
+        {
+            "Open": opens[:size],
+            "High": highs[:size],
+            "Low": lows[:size],
+            "Close": closes[:size],
+            "Volume": volumes[:size],
+        },
+        index=index,
+    )
+    frame = frame.apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"])
+    if frame.empty:
+        return pd.DataFrame()
+    frame.columns = pd.MultiIndex.from_product([[symbol], frame.columns])
+    return frame
+
+
+def _download_marketdata_history(tickers: list[str], period: str) -> tuple[pd.DataFrame, list[str], list[str]]:
+    settings = get_settings()
+    token = (settings.marketdata_token or settings.marketdata_api_token or "").strip()
+    if not token or not settings.marketdata_stock_candle_fallback_enabled:
+        return pd.DataFrame(), [], tickers
+
+    limit = max(0, int(settings.marketdata_stock_candle_fallback_limit or 0))
+    if limit <= 0:
+        return pd.DataFrame(), [], tickers
+
+    base_url = str(settings.marketdata_base_url).rstrip("/")
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=_period_to_days(period) + 10)
+    symbols = [symbol for symbol in tickers if symbol and not symbol.startswith("^")][:limit]
+    timeout = min(float(settings.request_timeout or 20.0), 8.0)
+    frames: list[pd.DataFrame] = []
+    loaded: list[str] = []
+    missing: list[str] = []
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            for symbol in symbols:
+                try:
+                    response = client.get(
+                        f"{base_url}/v1/stocks/candles/D/{symbol}/",
+                        params={
+                            "from": start_date.isoformat(),
+                            "to": end_date.isoformat(),
+                            "token": token,
+                        },
+                    )
+                    response.raise_for_status()
+                    frame = _finnhub_candle_frame(symbol, response.json())
+                    if frame.empty:
+                        missing.append(symbol)
+                        continue
+                    frames.append(frame)
+                    loaded.append(symbol)
+                except Exception:
+                    missing.append(symbol)
+    except Exception:
+        return pd.DataFrame(), loaded, tickers
+
+    for symbol in tickers:
+        if symbol.startswith("^") or symbol not in symbols:
+            missing.append(symbol)
+
+    if not frames:
+        return pd.DataFrame(), loaded, list(dict.fromkeys(missing))
+    return pd.concat(frames, axis=1).sort_index(), loaded, list(dict.fromkeys(missing))
+
+
+def _stooq_symbol(symbol: str) -> str | None:
+    symbol = (symbol or "").strip().lower()
+    if not symbol or symbol.startswith("^"):
+        return None
+    return f"{symbol}.us"
+
+
+def _stooq_candle_frame(symbol: str, csv_text: str) -> pd.DataFrame:
+    if "Date,Open,High,Low,Close,Volume" not in csv_text[:80]:
+        return pd.DataFrame()
+    try:
+        frame = pd.read_csv(io.StringIO(csv_text))
+    except Exception:
+        return pd.DataFrame()
+    if frame.empty or "Date" not in frame.columns or "Close" not in frame.columns:
+        return pd.DataFrame()
+
+    frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce")
+    frame = frame.dropna(subset=["Date", "Close"]).set_index("Date")
+    columns = [column for column in ("Open", "High", "Low", "Close", "Volume") if column in frame.columns]
+    if "Close" not in columns:
+        return pd.DataFrame()
+    frame = frame[columns].apply(pd.to_numeric, errors="coerce").dropna(subset=["Close"])
+    if frame.empty:
+        return pd.DataFrame()
+    frame.columns = pd.MultiIndex.from_product([[symbol], frame.columns])
+    return frame
+
+
+def _download_stooq_history(tickers: list[str], period: str) -> tuple[pd.DataFrame, list[str], list[str]]:
+    settings = get_settings()
+    if not settings.stooq_price_fallback_enabled:
+        return pd.DataFrame(), [], tickers
+
+    limit = max(0, int(settings.stooq_price_fallback_limit or 0))
+    if limit <= 0:
+        return pd.DataFrame(), [], tickers
+
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=_period_to_days(period) + 10)
+    symbols = [symbol for symbol in tickers if _stooq_symbol(symbol)][:limit]
+    timeout = min(float(settings.request_timeout or 20.0), 6.0)
+    frames: list[pd.DataFrame] = []
+    loaded: list[str] = []
+    missing: list[str] = []
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            for symbol in symbols:
+                stooq_symbol = _stooq_symbol(symbol)
+                if not stooq_symbol:
+                    continue
+                try:
+                    response = client.get(
+                        "https://stooq.com/q/d/l/",
+                        params={
+                            "s": stooq_symbol,
+                            "i": "d",
+                            "d1": start_date.strftime("%Y%m%d"),
+                            "d2": end_date.strftime("%Y%m%d"),
+                        },
+                    )
+                    response.raise_for_status()
+                    frame = _stooq_candle_frame(symbol, response.text)
+                    if frame.empty:
+                        missing.append(symbol)
+                        continue
+                    frames.append(frame)
+                    loaded.append(symbol)
+                except Exception:
+                    missing.append(symbol)
+    except Exception:
+        return pd.DataFrame(), loaded, tickers
+
+    for symbol in tickers:
+        if symbol not in symbols:
+            missing.append(symbol)
+
+    if not frames:
+        return pd.DataFrame(), loaded, list(dict.fromkeys(missing))
+    return pd.concat(frames, axis=1).sort_index(), loaded, list(dict.fromkeys(missing))
+
+
+def _download_finnhub_history(tickers: list[str], period: str) -> tuple[pd.DataFrame, list[str], list[str]]:
+    settings = get_settings()
+    token = (settings.finnhub_api_key or "").strip()
+    if not token or not settings.finnhub_candle_fallback_enabled:
+        return pd.DataFrame(), [], tickers
+
+    limit = max(0, int(settings.finnhub_candle_fallback_limit or 0))
+    if limit <= 0:
+        return pd.DataFrame(), [], tickers
+
+    base_url = str(settings.finnhub_base_url).rstrip("/")
+    end_ts = int(datetime.now(timezone.utc).timestamp())
+    start_ts = end_ts - (_period_to_days(period) + 10) * 24 * 60 * 60
+    frames: list[pd.DataFrame] = []
+    loaded: list[str] = []
+    missing: list[str] = []
+    symbols = [symbol for symbol in tickers if symbol and not symbol.startswith("^")][:limit]
+    timeout = min(float(settings.request_timeout or 20.0), 8.0)
+
+    try:
+        with httpx.Client(timeout=timeout, headers={"X-Finnhub-Token": token}) as client:
+            for symbol in symbols:
+                try:
+                    response = client.get(
+                        f"{base_url}/stock/candle",
+                        params={
+                            "symbol": symbol,
+                            "resolution": "D",
+                            "from": start_ts,
+                            "to": end_ts,
+                            "token": token,
+                        },
+                    )
+                    response.raise_for_status()
+                    frame = _finnhub_candle_frame(symbol, response.json())
+                    if frame.empty:
+                        missing.append(symbol)
+                        continue
+                    frames.append(frame)
+                    loaded.append(symbol)
+                except Exception:
+                    missing.append(symbol)
+    except Exception:
+        return pd.DataFrame(), loaded, tickers
+
+    for symbol in tickers:
+        if symbol.startswith("^") or symbol not in symbols:
+            missing.append(symbol)
+
+    if not frames:
+        return pd.DataFrame(), loaded, list(dict.fromkeys(missing))
+    return pd.concat(frames, axis=1).sort_index(), loaded, list(dict.fromkeys(missing))
+
+
+def _merge_history(primary: pd.DataFrame, fallback: pd.DataFrame) -> pd.DataFrame:
+    if primary.empty:
+        return fallback.copy()
+    if fallback.empty:
+        return primary
+    primary_frame = primary
+    if isinstance(primary.columns, pd.MultiIndex) and isinstance(fallback.columns, pd.MultiIndex):
+        fallback_symbols = set(str(symbol) for symbol in fallback.columns.get_level_values(0))
+        primary_frame = primary.loc[:, [column for column in primary.columns if str(column[0]) not in fallback_symbols]]
+    merged = pd.concat([primary_frame, fallback], axis=1).sort_index()
+    return merged.loc[:, ~merged.columns.duplicated()]
+
+
 def _download_history(tickers: list[str], period: str = "1y") -> pd.DataFrame:
     session = getattr(yahoo, "_yf_session", None)
     kwargs: dict[str, Any] = {
@@ -130,7 +403,92 @@ def _download_history(tickers: list[str], period: str = "1y") -> pd.DataFrame:
     }
     if session is not None:
         kwargs["session"] = session
-    return yf.download(**kwargs)
+    try:
+        primary = yf.download(**kwargs)
+    except Exception:
+        primary = pd.DataFrame()
+
+    missing = [ticker for ticker in tickers if _slice_ticker(primary, ticker).empty]
+    if not primary.empty and not missing:
+        return _attach_history_status(
+            primary,
+            _history_status(
+                provider="Yahoo/yfinance",
+                status="active",
+                message="Yahoo/yfinance 日线价格、成交量与技术指标输入",
+            ),
+        )
+
+    merged = primary
+    providers: list[str] = []
+    fallback_symbols: list[str] = []
+    remaining = missing or tickers
+
+    marketdata_fallback, marketdata_symbols, marketdata_missing = _download_marketdata_history(remaining, period)
+    if not marketdata_fallback.empty:
+        merged = _merge_history(merged, marketdata_fallback)
+        providers.append("MarketData.app")
+        fallback_symbols.extend(marketdata_symbols)
+        remaining = [ticker for ticker in tickers if _slice_ticker(merged, ticker).empty]
+    else:
+        remaining = marketdata_missing or remaining
+
+    stooq_fallback, stooq_symbols, stooq_missing = _download_stooq_history(remaining, period)
+    if not stooq_fallback.empty:
+        merged = _merge_history(merged, stooq_fallback)
+        providers.append("Stooq")
+        fallback_symbols.extend(stooq_symbols)
+        remaining = [ticker for ticker in tickers if _slice_ticker(merged, ticker).empty]
+    else:
+        remaining = stooq_missing or remaining
+
+    finnhub_fallback, finnhub_symbols, finnhub_missing = _download_finnhub_history(remaining, period)
+    if not finnhub_fallback.empty:
+        merged = _merge_history(merged, finnhub_fallback)
+        providers.append("Finnhub")
+        fallback_symbols.extend(finnhub_symbols)
+
+    if not merged.empty and providers:
+        still_missing = [ticker for ticker in tickers if _slice_ticker(merged, ticker).empty]
+        provider = "Yahoo/yfinance + " + " + ".join(providers)
+        status = "active" if not still_missing else "degraded"
+        source_label = " + ".join(providers)
+        message = (
+            f"Yahoo/yfinance 部分或全部数据不可用，已启用 {source_label} 日线兜底"
+            if primary.empty
+            else f"Yahoo/yfinance 缺少部分标的，已用 {source_label} 日线补齐"
+        )
+        return _attach_history_status(
+            merged,
+            _history_status(
+                provider=provider,
+                status=status,
+                message=message,
+                fallback_symbols=list(dict.fromkeys(fallback_symbols)),
+                missing_symbols=still_missing,
+            ),
+        )
+
+    if primary.empty:
+        fallback_missing = list(dict.fromkeys([*marketdata_missing, *stooq_missing, *finnhub_missing]))
+        return _empty_history_with_status(
+            _history_status(
+                provider="Yahoo/yfinance",
+                status="degraded",
+                message="Yahoo/yfinance 数据不可用，公开日线兜底源也未拿到可用数据",
+                missing_symbols=fallback_missing or tickers,
+            )
+        )
+
+    return _attach_history_status(
+        primary,
+        _history_status(
+            provider="Yahoo/yfinance",
+            status="degraded",
+            message="Yahoo/yfinance 缺少部分标的，公开日线兜底源未拿到可用数据",
+            missing_symbols=missing,
+        ),
+    )
 
 
 def _slice_ticker(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -214,6 +572,7 @@ def _feature_row(ticker: str, hist: pd.DataFrame, spy: pd.DataFrame, sector_meta
     rel_volume = _safe_float((volume.iloc[-1] / avg_vol20), 3) if avg_vol20 > 0 else None
     high_52w = _safe_float(close.tail(252).max() if len(close) >= 120 else close.max(), 4)
     high_3m = _safe_float(close.tail(63).max(), 4)
+    vol_price_match = compute_vol_price_match(hist)
 
     spy_close = spy["Close"].dropna() if not spy.empty and "Close" in spy.columns else pd.Series(dtype=float)
     stock_ret_63 = _ret(close, 63)
@@ -247,6 +606,11 @@ def _feature_row(ticker: str, hist: pd.DataFrame, spy: pd.DataFrame, sector_meta
         "avg_dollar_volume_20d": _safe_float(avg_dollar_vol, 0),
         "ath_proximity": _safe_float(price / high_52w * 100, 2) if high_52w else None,
         "drawdown_3m": _safe_float((price / high_3m - 1) * 100, 2) if high_3m else None,
+        "near_3m_high": bool(high_3m and price >= high_3m * 0.985),
+        "breakout_confirmed": bool(high_3m and price >= high_3m * 0.995 and (rel_volume or 0) >= 1.15),
+        "follow_through": bool(len(close) >= 5 and close.tail(3).min() >= close.tail(20).mean()),
+        "vol_price_match": vol_price_match,
+        "volume_truth": vol_price_match,
         "history_days": len(close),
     }
 
@@ -296,6 +660,20 @@ def _risk_penalty(row: dict[str, Any], min_avg_dollar_volume: float, profile: st
         penalty += 7
         flags.append("回撤较深")
 
+    vol_price = row.get("vol_price_match") if isinstance(row.get("vol_price_match"), dict) else {}
+    setup_type = str(vol_price.get("setup_type") or "")
+    vol_adjustment = _safe_float(vol_price.get("risk_penalty_adjustment"), 1) or 0.0
+    if vol_adjustment:
+        penalty += vol_adjustment
+    if setup_type == "vacuum":
+        flags.append("真空型")
+        warnings.append("真空型收缩，假突破风险偏高")
+    elif setup_type == "absorption_bearish":
+        flags.append("空头吸收")
+        warnings.append("空头吸收结构，向上突破需要更强确认")
+    elif setup_type == "absorption_bullish":
+        flags.append("多头吸收")
+
     return round(penalty * tilt["risk"], 1), flags, warnings
 
 
@@ -323,15 +701,17 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
     relative_mult = float(rules.get("relative_strength_weight_multiplier", 1.0) or 1.0)
     long_mult = float(rules.get("long_trend_weight_multiplier", 1.0) or 1.0)
     breakout_mult = float(rules.get("breakout_weight_multiplier", 1.0) or 1.0)
+    sector_mult = float(rules.get("sector_strength_weight_multiplier", 1.0) or 1.0)
     option_mult = float(rules.get("option_heat_weight_multiplier", 1.0) or 1.0)
     risk_mult = float(rules.get("risk_penalty_multiplier", 1.0) or 1.0)
     weights = {
-        "short": .20 * momentum_mult,
-        "mid": .30 * relative_mult,
-        "long": .20 * max(long_mult, breakout_mult),
-        "sector": .12,
-        "option": .06 * option_mult,
-        "market": .12,
+        "short": .18 * momentum_mult,
+        "mid": .26 * relative_mult,
+        "long": .16 * long_mult,
+        "breakout": .12 * breakout_mult,
+        "sector": .10 * sector_mult,
+        "option": .08 * option_mult,
+        "market": .08,
     }
     weight_total = sum(weights.values()) or 1.0
     effective_weights = {key: round(value / weight_total, 4) for key, value in weights.items()}
@@ -375,22 +755,35 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
         sector_score = sector_score_by_id.get(row.get("sector_id") or "", 50)
         option_heat_score = 50.0
         risk_penalty, risk_flags, warnings = _risk_penalty(row, min_avg_dollar_volume, profile)
+        vol_price = row.get("vol_price_match") if isinstance(row.get("vol_price_match"), dict) else {}
+        base_breakout_score = (_clamp(row.get("ath_proximity")) + ret20) / 2
+        breakout_quality_score = _clamp(
+            base_breakout_score +
+            (_safe_float(vol_price.get("breakout_quality_adjustment"), 1) or 0.0) -
+            max(_safe_float(vol_price.get("false_breakout_risk"), 1) or 0.0, 0.0)
+        )
+        if vol_price.get("setup_type") == "vacuum" and not row.get("follow_through"):
+            breakout_quality_score = min(breakout_quality_score, 65.0)
+        if vol_price.get("setup_type") == "absorption_bearish" and not row.get("breakout_confirmed"):
+            breakout_quality_score = min(breakout_quality_score, 55.0)
         raw_final = (
             short_score * weights["short"] +
             mid_score * weights["mid"] +
             long_score * weights["long"] +
+            breakout_quality_score * weights["breakout"] +
             sector_score * weights["sector"] +
             option_heat_score * weights["option"] +
             market["score"] * weights["market"]
         ) / weight_total - risk_penalty * risk_mult
         market_adjustment = _safe_float(
             raw_final - (
-                short_score * .20 +
-                mid_score * .30 +
-                long_score * .20 +
-                sector_score * .12 +
-                option_heat_score * .06 +
-                market["score"] * .12 -
+                short_score * .18 +
+                mid_score * .26 +
+                long_score * .16 +
+                base_breakout_score * .12 +
+                sector_score * .10 +
+                option_heat_score * .08 +
+                market["score"] * .08 -
                 risk_penalty
             ),
             2,
@@ -409,6 +802,9 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
         if row.get("rel_volume") is not None and row["rel_volume"] >= 1.5:
             tags.append("放量")
             reasons.append(f"成交量约为20日均量{row['rel_volume']:.1f}倍")
+        for tag in vol_price.get("tags", [])[:2]:
+            if tag not in {"未明显收缩", "量价样本不足"}:
+                tags.append(str(tag))
         if row.get("ma_alignment", 0) >= 66:
             tags.append("均线多头")
             reasons.append("价格位于关键均线上方")
@@ -432,12 +828,20 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
             "relative_strength": round(rs63, 1),
             "trend": round((row.get("ma_alignment", 50) + _score_signed_pct(row.get("dist_sma50"), 320)) / 2, 1),
             "volume": round(rv_rank, 1),
-            "breakout": round((_clamp(row.get("ath_proximity")) + ret20) / 2, 1),
+            "breakout": round(breakout_quality_score, 1),
+            "base_breakout": round(base_breakout_score, 1),
             "technical": round((_score_rsi(row.get("rsi14")) + _score_signed_pct(row.get("macd_direction"), 40)) / 2, 1),
             "sector": round(sector_score, 1),
             "option_heat": round(option_heat_score, 1),
             "risk_penalty": round(risk_penalty, 1),
             "market_regime": round(market.get("score") or 50, 1),
+            "risk_on_spread": round(market.get("risk_on_spread_score") or 50, 1),
+            "volume_truth": {
+                "setup_type": vol_price.get("setup_type"),
+                "setup_label": vol_price.get("setup_label"),
+                "breakout_quality_adjustment": vol_price.get("breakout_quality_adjustment"),
+                "false_breakout_risk": vol_price.get("false_breakout_risk"),
+            },
             "market_adjustment": market_adjustment,
             "market_rules": effective_weights,
         }
@@ -447,9 +851,11 @@ def _score_rows(rows: list[dict[str, Any]], market: dict[str, Any], profile: str
             "score_mid": round(_clamp(mid_score), 1),
             "score_long": round(_clamp(long_score), 1),
             "sector_score": round(sector_score, 1),
+            "breakout_quality_score": round(breakout_quality_score, 1),
             "option_heat_score": round(option_heat_score, 1),
             "option_score_weight": effective_weights["option"],
             "market_regime_score": market["score"],
+            "risk_on_spread_score": market.get("risk_on_spread_score"),
             "risk_penalty": risk_penalty,
             "final_score": final_score,
             "strength_score": final_score,
@@ -587,6 +993,11 @@ def _scan_sync(
 
     all_symbols = list(dict.fromkeys(tickers + list(BENCHMARKS)))
     raw = _download_history(all_symbols)
+    price_source = raw.attrs.get("price_source") or _history_status(
+        provider="Yahoo/yfinance",
+        status="active",
+        message="日线价格、成交量与技术指标输入",
+    )
     index_data = {symbol: _slice_ticker(raw, symbol) for symbol in BENCHMARKS}
     market = compute_market_regime(index_data)
     spy = index_data.get("SPY", pd.DataFrame())
@@ -632,6 +1043,8 @@ def _scan_sync(
             "min_avg_dollar_volume": min_avg_dollar_volume,
         },
         "market_regime": market,
+        "market_context": market.get("market_context", {}),
+        "spread_matrix": market.get("spread_matrix", {}),
         "count": len(limited),
         "universe_count": len(tickers),
         "screened_count": len(rows),
@@ -641,9 +1054,11 @@ def _scan_sync(
         "sectors": _sector_strength(scored),
         "data_sources": {
             "prices": {
-                "provider": "Yahoo/yfinance",
-                "status": "active",
-                "message": "日线价格、成交量与技术指标输入",
+                "provider": price_source.get("provider") or "Yahoo/yfinance",
+                "status": price_source.get("status") or "active",
+                "message": price_source.get("message") or "日线价格、成交量与技术指标输入",
+                "fallback_symbols": price_source.get("fallback_symbols") or [],
+                "missing_symbols": price_source.get("missing_symbols") or [],
             },
             "fundamentals": finnhub_status,
             "options": {
@@ -671,7 +1086,7 @@ async def scan_strength(
         f":fh:{int(finnhub_is_enabled(settings))}:md:{int(marketdata_is_enabled(settings))}"
         f":yo:{int(yahoo_options_is_enabled(settings))}:{settings.yahoo_options_enrich_limit}"
         f":ydte:{settings.yahoo_option_target_dte}:ywin:{settings.yahoo_option_strike_window_pct}"
-        ":mr:v2"
+        ":mr:v3:spread:voltruth"
     )
 
     async def produce() -> dict[str, Any]:
