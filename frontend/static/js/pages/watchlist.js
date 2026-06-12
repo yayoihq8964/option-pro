@@ -244,16 +244,6 @@ function renderStockCard(stock, editMode = false) {
   `;
 }
 
-function bindStockCardNavigation() {
-  document.querySelectorAll('.stock-card[data-ticker]').forEach((card) => {
-    card.addEventListener('click', () => {
-      const ticker = card.dataset.ticker;
-      if (!ticker) return;
-      window.location.hash = `#detail/${encodeURIComponent(ticker)}`;
-    });
-  });
-}
-
 function bindHeatmapNavigation() {
   document.querySelectorAll('.terminal-heatmap .heatmap-tile[data-ticker]').forEach((tile) => {
     tile.addEventListener('click', () => {
@@ -300,14 +290,9 @@ function renderWatchlistShell(isLoading = false) {
               <li class="terminal-panel-empty">正在加载…</li>
             </ul>
           </section>
-          <section class="terminal-panel panel">
-            <span class="label-caps">板块 IV 概览</span>
-            <ul>
-              <li><strong>SEMIS</strong><span class="up mono font-data-mono" data-numeric>42.1</span></li>
-              <li><strong>TECH</strong><span class="mono font-data-mono" data-numeric>28.7</span></li>
-              <li><strong>AUTO</strong><span class="down mono font-data-mono" data-numeric>51.4</span></li>
-            </ul>
-          </section>
+          <!-- 板块 IV 概览 removed: it showed hardcoded fake numbers (42.1/28.7/51.4),
+               which violates this file's own "real data only" rule. Real sector IV
+               lives on the 板块 page. -->
         </aside>
       </div>
       <section class="terminal-heatmap panel" aria-labelledby="terminal-heatmap-title">

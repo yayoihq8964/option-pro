@@ -24,6 +24,7 @@ _endpoint_cache: dict[str, tuple[float, Any]] = {}
 # Per-key lock prevents thundering herd: concurrent requests for the same
 # cold key would otherwise all kick off their own yfinance fetch.
 _endpoint_locks: dict[str, asyncio.Lock] = {}
+_ENDPOINT_PURGE_THRESHOLD = 2048
 
 def _lock_for(key: str) -> asyncio.Lock:
     lock = _endpoint_locks.get(key)
@@ -31,6 +32,16 @@ def _lock_for(key: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         _endpoint_locks[key] = lock
     return lock
+
+def _maybe_purge_endpoint_cache(now: float) -> None:
+    """Bound memory: per-ticker keys (stock:/chart:/logo:) accumulate forever
+    in a long-lived process otherwise."""
+    if len(_endpoint_cache) < _ENDPOINT_PURGE_THRESHOLD and len(_endpoint_locks) < _ENDPOINT_PURGE_THRESHOLD:
+        return
+    for key in [k for k, (expires_at, _) in _endpoint_cache.items() if expires_at <= now]:
+        _endpoint_cache.pop(key, None)
+    for key in [k for k, lock in _endpoint_locks.items() if k not in _endpoint_cache and not lock.locked()]:
+        _endpoint_locks.pop(key, None)
 
 async def _cached_endpoint(key: str, ttl: int, loader):
     now = time.time()
@@ -50,6 +61,7 @@ async def _cached_endpoint(key: str, ttl: int, loader):
             if hit:
                 return hit[1]  # stale fallback
             raise
+        _maybe_purge_endpoint_cache(now)
         _endpoint_cache[key] = (now + ttl, value)
         return value
 

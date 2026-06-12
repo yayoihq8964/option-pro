@@ -10,13 +10,16 @@ export function renderChart(container, data = {}, visibleBars = 0, options = {})
   const ema20 = normalizeMA(Array.isArray(data) ? [] : data.ema20 || []);
   const sma50 = normalizeMA(Array.isArray(data) ? [] : data.sma50 || []);
 
+  const emptyState = (text) =>
+    `<div style="height:100%;min-height:256px;display:flex;align-items:center;justify-content:center;color:#70726f;font-size:14px">${text}</div>`;
+
   if (!bars.length) {
-    container.innerHTML = '<div class="h-64 md:h-80 flex items-center justify-center text-on-surface-variant text-sm">暂无数据</div>';
+    container.innerHTML = emptyState('暂无数据');
     return null;
   }
 
   if (!window.LightweightCharts) {
-    container.innerHTML = '<div class="h-64 md:h-80 flex items-center justify-center text-on-surface-variant text-sm">图表库加载中...</div>';
+    container.innerHTML = emptyState('图表库加载中...');
     return null;
   }
   const hasExtendedBars = bars.some(b => b.extended);

@@ -47,6 +47,19 @@ if _yf_session is not None:
 
 # Simple in-memory cache for yfinance data. Values are (expires_at, data).
 _cache: dict[str, tuple[datetime, Any]] = {}
+_CACHE_PURGE_THRESHOLD = 1024
+
+
+def _purge_cache(now: datetime) -> None:
+    """Drop expired entries so per-ticker/expiration keys can't pile up forever."""
+    if len(_cache) < _CACHE_PURGE_THRESHOLD:
+        return
+    for key in [k for k, (expires_at, _) in _cache.items() if expires_at <= now]:
+        _cache.pop(key, None)
+    if len(_cache) >= _CACHE_PURGE_THRESHOLD:
+        # Still too big (all entries fresh): drop the oldest-expiring half.
+        for key, _ in sorted(_cache.items(), key=lambda item: item[1][0])[: len(_cache) // 2]:
+            _cache.pop(key, None)
 
 
 def _cached(key: str, ttl_seconds: int, loader):
@@ -61,6 +74,7 @@ def _cached(key: str, ttl_seconds: int, loader):
         if hit:
             return hit[1]
         raise
+    _purge_cache(now)
     _cache[key] = (now + timedelta(seconds=ttl_seconds), value)
     return value
 
@@ -116,7 +130,9 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
             return compute_greeks(price, strike, T, 0.05, iv, is_call=is_call)
 
         calls = []
-        for _, row in chain.calls.iterrows():
+        # itertuples is 5-10x faster than iterrows; _asdict() keeps dict access.
+        for nt in chain.calls.itertuples(index=False):
+            row = nt._asdict()
             strike = float(row["strike"])
             last_price = _safe_float(row.get("lastPrice"))
             iv = _resolve_iv(row, strike, last_price, price, is_call=True)
@@ -147,7 +163,8 @@ def get_option_chain(ticker: str, expiration: str) -> dict[str, Any]:
             )
 
         puts = []
-        for _, row in chain.puts.iterrows():
+        for nt in chain.puts.itertuples(index=False):
+            row = nt._asdict()
             strike = float(row["strike"])
             last_price = _safe_float(row.get("lastPrice"))
             iv = _resolve_iv(row, strike, last_price, price, is_call=False)

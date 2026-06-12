@@ -161,14 +161,18 @@ def _next_future_date(candidates: list[date], today: date) -> date | None:
 
 @router.get("/upcoming")
 async def upcoming_earnings():
-    """Fetch real upcoming earnings dates from Yahoo Finance."""
+    """Fetch real upcoming earnings dates from Yahoo Finance.
 
+    Uses the locked cache helper so concurrent cold-cache requests share ONE
+    fetch instead of each firing ~67 tickers worth of yfinance calls
+    (thundering herd).
+    """
     today = _market_today()
     key = f"earnings:upcoming:{today.isoformat()}"
-    cached = cache.get(key)
-    if cached:
-        return _sanitize(cached)
+    return await cache.get_or_set(key, 3600, lambda: _build_upcoming_earnings(today))
 
+
+async def _build_upcoming_earnings(today: date):
     sem = asyncio.Semaphore(8)
 
     async def fetch_one(ticker: str):
@@ -217,7 +221,4 @@ async def upcoming_earnings():
     results = await asyncio.gather(*[fetch_one(t) for t in EARNINGS_TICKERS], return_exceptions=True)
     earnings = [r for r in results if isinstance(r, dict)]
     earnings.sort(key=lambda x: x.get("earnings_date", "9999"))
-
-    response = _sanitize({"earnings": earnings})
-    cache.set(key, response, ttl=3600)
-    return response
+    return _sanitize({"earnings": earnings})

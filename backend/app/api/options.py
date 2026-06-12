@@ -8,9 +8,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import ExpirationsResponse, OptionChainResponse
 from app.services import yahoo
+from app.services.cache import cache
 
 router = APIRouter(prefix="/api/options", tags=["options"])
 POPULAR_TICKERS = ["NVDA", "TSLA", "AAPL", "AMD", "AMZN", "META", "MSFT", "SPY", "QQQ", "GOOGL"]
+
+_UNUSUAL_TTL = 120  # seconds; the scan costs ~30 Yahoo calls, never run it per request
 
 
 @router.get("/unusual")
@@ -18,8 +21,19 @@ async def unusual_activity(
     type: Literal["all", "call", "put"] = "all",
     min_vol_oi: float = Query(1.0, ge=0),
 ):
-    """Scan popular tickers for unusual options activity, parallel per ticker."""
+    """Scan popular tickers for unusual options activity, parallel per ticker.
 
+    Cached (with a per-key lock) — previously every request re-scanned
+    10 tickers x (expirations + 2 chains) against Yahoo with no cache at all.
+    """
+    return await cache.get_or_set(
+        f"unusual:{type}:{min_vol_oi}",
+        _UNUSUAL_TTL,
+        lambda: _unusual_activity_impl(type, min_vol_oi),
+    )
+
+
+async def _unusual_activity_impl(type: str, min_vol_oi: float):
     def _scan_one(symbol: str):
         """Sync work for a single ticker — runs in its own thread."""
         rows = []

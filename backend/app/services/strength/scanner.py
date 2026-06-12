@@ -984,6 +984,7 @@ def _scan_sync(
     sector_id: str | None,
     min_price: float,
     min_avg_dollar_volume: float,
+    include_options: bool = True,
 ) -> dict[str, Any]:
     tickers, sector_meta = _theme_universe(sector_id)
     if universe != "themes":
@@ -1022,12 +1023,26 @@ def _scan_sync(
             skipped["data_error"] += 1
 
     scored = _score_rows(rows, market, profile, min_avg_dollar_volume)
-    yahoo_options_status = enrich_rows_with_yahoo_options(scored, display_top=top)
+    if include_options:
+        yahoo_options_status = enrich_rows_with_yahoo_options(scored, display_top=top)
+    else:
+        # Single-stock lookups don't need the (very expensive) option-chain
+        # enrichment pass over up to 90 tickers; keep the neutral placeholder.
+        yahoo_options_status = {
+            "provider": "Yahoo/yfinance",
+            "status": "skipped",
+            "configured": True,
+            "enriched": 0,
+            "message": "单标的查询跳过期权粗筛（性能优化）",
+        }
     _refresh_classifications(scored)
     _sort_scored(scored, timeframe)
     limited = scored[:top]
     finnhub_status = enrich_rows_with_finnhub(limited)
-    marketdata_status = enrich_rows_with_marketdata_options(limited)
+    if include_options:
+        marketdata_status = enrich_rows_with_marketdata_options(limited)
+    else:
+        marketdata_status = {"provider": "MarketData.app", "status": "skipped", "configured": False, "enriched": 0, "message": "单标的查询跳过期权增强"}
     _refresh_classifications(limited)
     _sort_scored(limited, timeframe)
     options_status = _combined_options_status(yahoo_options_status, marketdata_status)
@@ -1079,13 +1094,15 @@ async def scan_strength(
     min_price: float = 5.0,
     min_avg_dollar_volume: float = 10_000_000,
     ttl: int = 600,
+    include_options: bool = True,
 ) -> dict[str, Any]:
     settings = get_settings()
     key = (
         f"strength:{universe}:{timeframe}:{profile}:{top}:{sector_id}:{min_price}:{min_avg_dollar_volume}"
         f":fh:{int(finnhub_is_enabled(settings))}:md:{int(marketdata_is_enabled(settings))}"
-        f":yo:{int(yahoo_options_is_enabled(settings))}:{settings.yahoo_options_enrich_limit}"
+        f":yo:{int(yahoo_options_is_enabled(settings) and include_options)}:{settings.yahoo_options_enrich_limit}"
         f":ydte:{settings.yahoo_option_target_dte}:ywin:{settings.yahoo_option_strike_window_pct}"
+        f":opt:{int(include_options)}"
         ":mr:v3:spread:voltruth"
     )
 
@@ -1100,6 +1117,7 @@ async def scan_strength(
             sector_id=sector_id,
             min_price=min_price,
             min_avg_dollar_volume=min_avg_dollar_volume,
+            include_options=include_options,
         )
 
     payload, was_cached, expires_at = await cache.get_or_set_with_meta(key, ttl, produce)
@@ -1123,13 +1141,20 @@ async def sector_strength(period: str = "3mo") -> dict[str, Any]:
 
 
 async def market_strength() -> dict[str, Any]:
-    payload = await scan_strength(timeframe="all", profile="balanced", top=5)
+    # Only market_regime is returned — option enrichment would be wasted work.
+    payload = await scan_strength(timeframe="all", profile="balanced", top=5, include_options=False)
     return {"as_of": payload["as_of"], "market_regime": payload["market_regime"]}
 
 
 async def stock_strength(ticker: str, profile: str = "balanced") -> dict[str, Any]:
     symbol = ticker.upper().strip()
-    payload = await scan_strength(timeframe="all", profile=profile, top=250, min_avg_dollar_volume=0)
+    # include_options=False: a single-stock lookup used to trigger a full
+    # 250-row scan INCLUDING the option-chain enrichment of up to 90 tickers
+    # (minutes of sequential Yahoo calls on a cold cache). Price/trend/sector
+    # scoring is unaffected; option heat stays at its neutral placeholder.
+    payload = await scan_strength(
+        timeframe="all", profile=profile, top=250, min_avg_dollar_volume=0, include_options=False
+    )
     for row in payload.get("rows", []):
         if row.get("ticker") == symbol:
             return {"as_of": payload["as_of"], "ticker": symbol, "row": row, "market_regime": payload["market_regime"]}

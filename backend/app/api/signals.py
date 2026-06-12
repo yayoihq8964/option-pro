@@ -75,17 +75,18 @@ async def stock_ai_analysis(ticker: str, request: Request):
         if isinstance(signals, dict):
             signals.pop("_cached", None)
         scores = compute_stock_scores(signals)
-        # 40s ceiling — fallback to programmatic-only response if AI hangs
+        # 60s ceiling — fallback to programmatic-only response if AI hangs
+        _AI_TIMEOUT_S = 60
         try:
             llm_result = await asyncio.wait_for(
                 asyncio.to_thread(ai_analysis.analyze_signals, symbol, signals, scores, fp),
-                timeout=40
+                timeout=_AI_TIMEOUT_S
             )
         except asyncio.TimeoutError:
             llm_result = {
                 "asset": symbol,
                 "dominant_regime": "ai_timeout",
-                "summary": "AI 分析超时（>60秒），仅展示程序化分数",
+                "summary": f"AI 分析超时（>{_AI_TIMEOUT_S}秒），仅展示程序化分数",
                 "top_risk_confidence": scores.get("top_score"),
                 "bottom_opportunity_confidence": scores.get("bottom_score"),
                 "dip_buy_quality": scores.get("dip_buy_quality"),

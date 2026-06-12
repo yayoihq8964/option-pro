@@ -9,7 +9,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-5.4-mini-2026-03-17}
-      - OPENAI_REASONING=${OPENAI_REASONING:-xhigh}
+      # low keeps signal/alert analysis <10s; xhigh routinely blew past the
+      # API-side AI timeout and burned tokens for little gain.
+      - OPENAI_REASONING=${OPENAI_REASONING:-low}
       - APP_AUTH_TOKEN=${APP_AUTH_TOKEN:-}
       - TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS:-false}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}

@@ -47,15 +47,65 @@ def _safe_float(value: Any, ndigits: int = 4) -> float | None:
         return None
 
 
+def _clean_frame(df: pd.DataFrame) -> pd.DataFrame:
+    # Drop rows with NaN close (yfinance sometimes returns trailing NaN)
+    if not df.empty and "Close" in df.columns:
+        df = df.dropna(subset=["Close"])
+    return df
+
+
 def _history(symbol: str, period: str = "1y") -> pd.DataFrame:
+    """Single-symbol daily history with a short TTL cache.
+
+    The cache matters: compute_stock_signals re-fetches SPY for every ticker,
+    which used to mean one redundant network download per stock request.
+    """
+    def load() -> pd.DataFrame:
+        try:
+            return _clean_frame(yf.Ticker(symbol).history(period=period, auto_adjust=True))
+        except Exception:
+            return pd.DataFrame()
+
+    return _cached(f"hist:{symbol}:{period}", 300, load)
+
+
+def _bulk_history(symbols: list[str], period: str = "1y") -> dict[str, pd.DataFrame]:
+    """Download many symbols in ONE yfinance batch call instead of N sequential
+    requests. Falls back to per-symbol fetch for anything missing."""
+    out: dict[str, pd.DataFrame] = {}
+    remaining = list(dict.fromkeys(symbols))
     try:
-        df = yf.Ticker(symbol).history(period=period, auto_adjust=True)
-        # Drop rows with NaN close (yfinance sometimes returns trailing NaN)
-        if not df.empty and "Close" in df.columns:
-            df = df.dropna(subset=["Close"])
-        return df
+        from app.services.yahoo import _yf_session
+        kwargs: dict[str, Any] = {
+            "tickers": " ".join(remaining),
+            "period": period,
+            "interval": "1d",
+            "group_by": "ticker",
+            "threads": False,
+            "progress": False,
+            "auto_adjust": True,
+        }
+        if _yf_session is not None:
+            kwargs["session"] = _yf_session
+        df = yf.download(**kwargs)
+        if not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                available = set(df.columns.get_level_values(0))
+                for symbol in remaining:
+                    if symbol in available:
+                        frame = _clean_frame(df[symbol].copy())
+                        if not frame.empty:
+                            out[symbol] = frame
+            elif len(remaining) == 1:
+                frame = _clean_frame(df.copy())
+                if not frame.empty:
+                    out[remaining[0]] = frame
     except Exception:
-        return pd.DataFrame()
+        pass
+    for symbol in remaining:
+        if symbol not in out:
+            out[symbol] = _history(symbol, period)
+    return out
 
 
 def _last(series: pd.Series, default: float | None = None) -> float | None:
@@ -120,9 +170,8 @@ def _percentile_rank(series: pd.Series, value: float | None) -> float | None:
     return _safe_float((clean <= value).mean() * 100, 1)
 
 
-def _is_above_sma(symbol: str, period: int = 50) -> bool:
-    hist = _history(symbol, "6mo")
-    if hist.empty or len(hist) < period:
+def _is_above_sma_frame(hist: pd.DataFrame, period: int = 50) -> bool:
+    if hist is None or hist.empty or len(hist) < period or "Close" not in hist.columns:
         return False
     close = hist["Close"]
     sma = close.rolling(period).mean().iloc[-1]
@@ -196,8 +245,14 @@ def _score_stock_signal(key: str, value: Any) -> tuple[int, int]:
 
 def compute_market_signals() -> dict:
     def load() -> dict:
-        spy = _history("SPY"); qqq = _history("QQQ"); iwm = _history("IWM"); rsp = _history("RSP")
-        vix = _history("^VIX"); hyg = _history("HYG"); tlt = _history("TLT"); tnx = _history("^TNX")
+        # ONE batched download for all 19 symbols (8 benchmarks + 11 sector
+        # ETFs) instead of 19 sequential network round-trips.
+        benchmarks = ["SPY", "QQQ", "IWM", "RSP", "^VIX", "HYG", "TLT", "^TNX"]
+        frames = _bulk_history(benchmarks + SECTOR_ETFS)
+        spy = frames.get("SPY", pd.DataFrame()); qqq = frames.get("QQQ", pd.DataFrame())
+        iwm = frames.get("IWM", pd.DataFrame()); rsp = frames.get("RSP", pd.DataFrame())
+        vix = frames.get("^VIX", pd.DataFrame()); hyg = frames.get("HYG", pd.DataFrame())
+        tlt = frames.get("TLT", pd.DataFrame()); tnx = frames.get("^TNX", pd.DataFrame())
         if spy.empty or len(spy) < 60:
             raise RuntimeError("Insufficient SPY data")
         close = spy["Close"]
@@ -211,7 +266,7 @@ def compute_market_signals() -> dict:
         if not rsp.empty and len(rsp) >= 5: add("rsp_spy_5d", ((rsp["Close"].iloc[-1] / rsp["Close"].iloc[-5]) / (close.iloc[-1] / close.iloc[-5]) - 1) * 100, "等权重/SPY 5日相对强弱%")
         if not iwm.empty and len(iwm) >= 5: add("iwm_spy_5d", ((iwm["Close"].iloc[-1] / iwm["Close"].iloc[-5]) / (close.iloc[-1] / close.iloc[-5]) - 1) * 100, "小盘/SPY 5日相对强弱%")
         if not qqq.empty and len(qqq) >= 5: add("qqq_spy_5d", ((qqq["Close"].iloc[-1] / qqq["Close"].iloc[-5]) / (close.iloc[-1] / close.iloc[-5]) - 1) * 100, "QQQ/SPY 5日相对强弱%")
-        add("sectors_above_50dma", sum(1 for s in SECTOR_ETFS if _is_above_sma(s, 50)) / len(SECTOR_ETFS) * 100, "板块ETF在50日线上方%")
+        add("sectors_above_50dma", sum(1 for s in SECTOR_ETFS if _is_above_sma_frame(frames.get(s), 50)) / len(SECTOR_ETFS) * 100, "板块ETF在50日线上方%")
         if not vix.empty and len(vix) >= 5:
             v = vix["Close"].iloc[-1]
             add("vix", v, "VIX")

@@ -5,6 +5,10 @@ pydantic==2.10.4
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
 yfinance>=0.2.40
+# pandas/numpy are used directly throughout the codebase — pin them explicitly
+# instead of relying on yfinance's transitive dependency set.
+pandas>=2.0
+numpy>=1.26
 curl_cffi>=0.7.0
 lxml>=5.0
 openai>=1.80.0

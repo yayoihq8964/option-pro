@@ -34,17 +34,30 @@ export async function mountIndexTicker() {
   track.innerHTML = INDICES.map(i => `<button class="ticker-item" type="button" data-index-symbol="${esc(i.symbol)}" title="加载中"><strong>${esc(i.label)}</strong><span class="mono">—</span><em class="mono">—</em></button>`).join('');
   bindClicks();
 
-  // Fetch all in parallel
-  const results = await Promise.all(INDICES.map(i => safe(api.stock(i.symbol))));
-  const data = INDICES.map((idx, i) => {
-    const r = results[i];
-    if (r?.__error) return idx;
-    return {
-      ...idx,
-      price: Number(r.price ?? r.regularMarketPrice ?? r.last),
-      changePercent: Number(r.change_percent ?? r.changePercent ?? r.regularMarketChangePercent)
-    };
-  });
+  // ONE batch request (backend fast_info) instead of 5 per-ticker overview
+  // calls that each ran yfinance's slow full `.info` scrape.
+  let data = INDICES;
+  const batch = await safe(api.marketIndices());
+  if (!batch?.__error && Array.isArray(batch?.indices)) {
+    const bySymbol = new Map(batch.indices.map(q => [q.symbol, q]));
+    data = INDICES.map(idx => {
+      const q = bySymbol.get(idx.symbol);
+      if (!q || q.price == null) return idx;
+      return { ...idx, price: Number(q.price), changePercent: Number(q.change_percent) };
+    });
+  } else {
+    // Fallback to per-ticker overview endpoint (older backend)
+    const results = await Promise.all(INDICES.map(i => safe(api.stock(i.symbol))));
+    data = INDICES.map((idx, i) => {
+      const r = results[i];
+      if (r?.__error) return idx;
+      return {
+        ...idx,
+        price: Number(r.price ?? r.regularMarketPrice ?? r.last),
+        changePercent: Number(r.change_percent ?? r.changePercent ?? r.regularMarketChangePercent)
+      };
+    });
+  }
 
   track.innerHTML = data.map(renderItem).join('');
   bindClicks();

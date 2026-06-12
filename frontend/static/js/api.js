@@ -131,6 +131,7 @@ export const api = {
 
   // Status
   marketStatus()        { return cached('mkt', T.PRICES, () => fetchJson(`${API_BASE}/market/status`)); },
+  marketIndices()       { return cached('mkt-idx', T.PRICES, () => fetchJson(`${API_BASE}/market/indices`)); },
   earnings()            { return cached('earn', T.STATIC, () => fetchJson(`${API_BASE}/earnings/upcoming`)); },
 
   earningsCorrelation() {

@@ -4,9 +4,29 @@ import hashlib, json, os, math, re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-# Cache: key → (expires_at, result, request_fingerprint)
-# If a different fingerprint hits the same key, refresh the analysis
-_cache: dict[str, tuple[datetime, dict, str]] = {}
+# Cache: key → (expires_at, result).
+# NOTE: cache validity is intentionally fingerprint-agnostic. The old
+# "different fingerprint → refresh" behavior meant two alternating users
+# forced a fresh (slow, paid) LLM call on every request.
+_cache: dict[str, tuple[datetime, dict]] = {}
+_CACHE_MAX_ENTRIES = 512
+
+
+def _cache_get(key: str) -> dict | None:
+    hit = _cache.get(key)
+    if hit and hit[0] > datetime.now(timezone.utc):
+        return hit[1]
+    return None
+
+
+def _cache_set(key: str, result: dict, ttl: timedelta) -> None:
+    now = datetime.now(timezone.utc)
+    if len(_cache) >= _CACHE_MAX_ENTRIES:
+        for stale in [k for k, (expires_at, _) in _cache.items() if expires_at <= now]:
+            _cache.pop(stale, None)
+        while len(_cache) >= _CACHE_MAX_ENTRIES and _cache:
+            _cache.pop(next(iter(_cache)), None)
+    _cache[key] = (now + ttl, result)
 
 # Module-level OpenAI client singleton (httpx connection pool reuse).
 # Lazy-initialized so import-time doesn't crash when env vars unset (tests).
@@ -81,11 +101,9 @@ def _hash_payload(obj) -> str:
 
 def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: float, expiration: str, fingerprint: str = "") -> dict:
     cache_key = f"alerts:{ticker.upper()}:{expiration}:{_hash_payload({'price': underlying_price, 'alerts': alerts[:8]})}"
-    cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.now(timezone.utc):
-        # Same person → return cache. Different person → refresh.
-        if not fingerprint or cached[2] == fingerprint:
-            return {**cached[1], "_cached": True}
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "_cached": True}
 
     if not alerts:
         return {"analysis": "暂无异动数据可供分析", "confidence": None}
@@ -110,10 +128,10 @@ def analyze_option_alerts(ticker: str, alerts: list[dict], underlying_price: flo
     try:
         raw = _ask(prompt, use_web_search=False)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(minutes=30), result, fingerprint)
+        _cache_set(cache_key, result, timedelta(minutes=30))
         return _sanitize_ai(result)
     except Exception as e:
-        return {"analysis": f"AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}
+        return {"analysis": "AI分析暂时不可用", "confidence": None, "error": str(e)[:120]}
 
 
 SIGNALS_SYSTEM_PROMPT = """你是一个美股个股与大盘顶部/底部信号分析器。
@@ -195,11 +213,14 @@ final_bias 只能从以下选项选择：
 def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str = "") -> dict:
     """LLM confidence analysis for precomputed top/bottom signals."""
     symbol = ticker.upper()
-    cache_key = f"signals:{symbol}"
-    cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.now(timezone.utc):
-        if not fingerprint or cached[2] == fingerprint:
-            return {**cached[1], "_cached": True}
+    # Key the cache on the actual signal payload (+ date) so intraday signal
+    # changes produce a fresh analysis instead of serving yesterday's verdict
+    # next to today's numbers.
+    today = datetime.now(timezone.utc).date().isoformat()
+    cache_key = f"signals:{symbol}:{today}:{_hash_payload(signals)}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "_cached": True}
 
     data = {
         "as_of": datetime.now(timezone.utc).date().isoformat(),
@@ -236,7 +257,8 @@ def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str =
         result.setdefault("data_quality", scores.get("data_quality"))
         result.setdefault("dip_buy_quality", scores.get("dip_buy_quality"))
         result.setdefault("options_flow_read", {"net_direction": "unknown", "confidence": 0, "bullish_flow_evidence": [], "bearish_flow_evidence": [], "unknown_or_neutral_flow": [], "warnings": ["未提供期权流结构化数据"]})
-        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
+        # 4h is plenty: the signal-hash key already invalidates on data change.
+        _cache_set(cache_key, result, timedelta(hours=4))
         return _sanitize_ai(result)
     except Exception as e:
         return {
@@ -268,10 +290,9 @@ def analyze_signals(ticker: str, signals: dict, scores: dict, fingerprint: str =
 
 def analyze_earnings_correlation(earnings: list[dict], fingerprint: str = "") -> dict:
     cache_key = "earnings_correlation"
-    cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.now(timezone.utc):
-        if not fingerprint or cached[2] == fingerprint:
-            return {**cached[1], "_cached": True}
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "_cached": True}
 
     if not earnings:
         return {"summary": "暂无即将发布的财报数据", "correlations": []}
@@ -295,10 +316,10 @@ def analyze_earnings_correlation(earnings: list[dict], fingerprint: str = "") ->
     try:
         raw = _ask(prompt, use_web_search=True)
         result = _parse_json(raw)
-        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
+        _cache_set(cache_key, result, timedelta(hours=24))
         return _sanitize_ai(result)
     except Exception as e:
-        return {"summary": f"AI分析暂时不可用", "correlations": [], "error": str(e)[:120]}
+        return {"summary": "AI分析暂时不可用", "correlations": [], "error": str(e)[:120]}
 
 
 def analyze_single_earnings_impact(earning: dict, fingerprint: str = "") -> dict:
@@ -308,10 +329,9 @@ def analyze_single_earnings_impact(earning: dict, fingerprint: str = "") -> dict
         return {"summary": "缺少代码", "impacted": []}
 
     cache_key = f"earnings_impact:{ticker}"
-    cached = _cache.get(cache_key)
-    if cached and cached[0] > datetime.now(timezone.utc):
-        if not fingerprint or cached[2] == fingerprint:
-            return {**cached[1], "_cached": True}
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return {**cached, "_cached": True}
 
     name = earning.get("name") or ticker
     sector = earning.get("sector") or "未知"
@@ -375,7 +395,7 @@ def analyze_single_earnings_impact(earning: dict, fingerprint: str = "") -> dict
         if not isinstance(result.get("impacted"), list):
             result["impacted"] = []
         result["ticker"] = ticker
-        _cache[cache_key] = (datetime.now(timezone.utc) + timedelta(hours=24), result, fingerprint)
+        _cache_set(cache_key, result, timedelta(hours=24))
         return _sanitize_ai(result)
     except Exception as e:
         return {

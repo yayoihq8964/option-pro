@@ -4,11 +4,46 @@ import asyncio
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import yfinance as yf
 from fastapi import APIRouter
+
+from app.services.cache import cache as _shared_cache
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
 ET = ZoneInfo("America/New_York")
+
+# Symbols served by the lightweight /indices batch endpoint (ticker bar).
+INDEX_SYMBOLS = ["^GSPC", "^IXIC", "^DJI", "^N225", "000001.SS"]
+
+
+@router.get("/indices")
+async def market_indices():
+    """Batch quote endpoint for the frontend index ticker bar.
+
+    One request returns all index quotes via fast_info — the old path made the
+    frontend call /api/stocks/{ticker} five times, each triggering yfinance's
+    slow full `.info` scrape.
+    """
+    return await _shared_cache.get_or_set("market:indices", 60, _build_indices)
+
+
+async def _build_indices():
+    def _one(symbol: str):
+        try:
+            fi = yf.Ticker(symbol).fast_info
+            price = float(fi.last_price)
+            prev = float(fi.previous_close) if fi.previous_close else price
+            return {
+                "symbol": symbol,
+                "price": round(price, 2),
+                "change_percent": round((price - prev) / prev * 100, 2) if prev else 0,
+            }
+        except Exception:
+            return {"symbol": symbol, "price": None, "change_percent": None}
+
+    results = await asyncio.gather(*[asyncio.to_thread(_one, s) for s in INDEX_SYMBOLS])
+    return {"indices": list(results)}
 
 
 def _observed(d: date) -> date:
